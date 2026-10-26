@@ -5,6 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="robots" content="noindex, nofollow">
 <title>Stato termostati</title>
+<!--
+  Versione: vedi VERSION nello script (Semantic Versioning MAJOR.MINOR.PATCH).
+  Storico:
+  1.0.0  dashboard: stato attuale, grafici temperatura/umidita'/batteria, riepilogo, tabella dati
+  1.1.0  previsione durata pile
+  1.2.0  consumi e comfort: ore di caldaia, costo, T esterna, inerzia termica, mappa oraria
+  1.3.0  pulsante Ricarica
+  1.4.0  asse Y con mezzi gradi, icona fiamma/cerchio sulla caldaia
+  1.5.0  controllo automatico della nuova versione alla riapertura (iOS), blocco zoom, numero di versione
+  Regola: PATCH = correzioni, MINOR = nuove funzioni compatibili, MAJOR = cambi che rompono il formato dei dati.
+-->
 <style>
   :root {
     color-scheme: light;
@@ -187,6 +198,7 @@
 
   <footer>
     <span id="source"></span>
+    <span id="version"></span>
     <button class="btn" id="btn-source" type="button">Cambia sorgente dati</button>
     <button class="btn" id="btn-theme" type="button">Tema</button>
   </footer>
@@ -200,6 +212,7 @@
   const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6,
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18 };   // consumi (0 = costo non calcolato)
+  const VERSION = '1.5.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -937,6 +950,20 @@
   if (dd !== null && ['0', '1', '7', '30'].includes(dd)) {
     S.days = +dd; for (const x of $('range').children) x.setAttribute('aria-pressed', x.dataset.r === dd);
   }
+  /* Riapertura dalla Home di iOS: la pagina resta in memoria e non si ricarica da sola.
+     Quando torna in primo piano si controlla se index.html e' cambiato (e in tal caso si ricarica tutto)
+     e comunque si rileggono i dati. */
+  let myHtml = null;
+  async function fetchHtml() { const r = await fetch(location.pathname + location.search, { cache: 'no-store' }); if (!r.ok) throw 0; return r.text(); }
+  fetchHtml().then(t => { myHtml = t; }).catch(() => { /* aperta da file: nessun controllo versione */ });
+  async function onVisible() {
+    if (document.visibilityState !== 'visible') return;
+    try { const t = await fetchHtml(); if (myHtml !== null && t !== myHtml) { location.reload(); return; } if (myHtml === null) myHtml = t; } catch { /* offline */ }
+    refresh();
+  }
+  document.addEventListener('visibilitychange', onVisible);
+  window.addEventListener('pageshow', e => { if (e.persisted) onVisible(); });
+  $('version').textContent = 'v' + VERSION;
   setInterval(refresh, 10 * 60 * 1000);
   boot();
 })();
