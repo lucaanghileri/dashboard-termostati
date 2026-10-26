@@ -2,7 +2,17 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Termostati">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="robots" content="noindex, nofollow">
 <title>Stato termostati</title>
 <!--
@@ -15,6 +25,7 @@
   1.4.0  asse Y con mezzi gradi, icona fiamma/cerchio sulla caldaia
   1.5.0  controllo automatico della nuova versione alla riapertura (iOS), blocco zoom, numero di versione
   1.6.0  banner dati fermi configurabile (dataStaleH, default 3 h) e piu' visibile; il monitoraggio avvisa su Telegram di buchi e guasti del cloud
+  1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   Regola: PATCH = correzioni, MINOR = nuove funzioni compatibili, MAJOR = cambi che rompono il formato dei dati.
 -->
 <style>
@@ -51,7 +62,7 @@
     margin: 0; background: var(--page); color: var(--ink);
     font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }   /* a schermo intero evita notch e barra home */
   h1 { font-size: 20px; font-weight: 600; margin: 0; }
   h2 { font-size: 14px; font-weight: 600; margin: 0; }
   .muted { color: var(--muted); }
@@ -100,6 +111,8 @@
   .ch-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
   .legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink2); font-size: 12px; }
   .legend span::before { content: ""; display: inline-block; width: 14px; height: 2px; background: var(--c); margin-right: 6px; vertical-align: middle; border-radius: 1px; }
+  .legend span.dash::before { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px); }
+  .legend span.band::before { height: 10px; background: color-mix(in srgb, var(--c) 22%, transparent); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-radius: 2px; box-sizing: border-box; }
   .chart { position: relative; width: 100%; }
   .chart svg { display: block; touch-action: pan-y; }
   .chart svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -138,6 +151,23 @@
   .kpi .val { font-size: 24px; font-weight: 600; line-height: 1.2; }
   .fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink2); }
   .fld input, select { padding: 6px 8px; border: 1px solid var(--axis); border-radius: 8px; background: var(--page); color: var(--ink); font: inherit; }
+  .filter-actions { margin-left: auto; display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  #report { position: fixed; inset: 0; z-index: 50; overflow: auto; background: var(--page); }
+  .report-bar { position: sticky; top: 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 16px; background: var(--page); border-bottom: 1px solid var(--border); }
+  .report-page { max-width: 820px; margin: 0 auto; padding: 16px 16px 48px; }
+  .report-page h1 { font-size: 22px; margin-bottom: 4px; }
+  @media print {
+    :root, :root[data-theme="dark"], :root[data-theme="light"] {
+      color-scheme: light; --page: #fff; --surface: #fff; --ink: #000; --ink2: #333; --muted: #555;
+      --grid: #ddd; --axis: #999; --border: #ccc; --series-1: #2a78d6; --series-2: #eb6834;
+    }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .noprint { display: none !important; }
+    html.report-open .wrap { display: none !important; }
+    #report { position: static; overflow: visible; }
+    .report-page { max-width: none; padding: 0; }
+    table, svg { break-inside: avoid; }
+  }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -180,6 +210,10 @@
         <button type="button" data-r="0" aria-pressed="false">Tutto</button>
       </div>
       <span class="muted" id="range-info"></span>
+      <span class="filter-actions">
+        <button class="btn" id="btn-csv" type="button" title="Scarica il CSV del periodo selezionato">⬇ CSV</button>
+        <button class="btn" id="btn-report" type="button" title="Riepilogo mensile stampabile / PDF">Riepilogo mensile</button>
+      </span>
     </div>
 
     <section class="grid charts" id="charts" aria-label="Andamento"></section>
@@ -205,6 +239,15 @@
   </footer>
 </div>
 
+<div id="report" hidden role="dialog" aria-label="Riepilogo mensile">
+  <div class="report-bar noprint">
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px">Mese <select id="report-month"></select></label>
+    <button class="btn primary" id="report-print" type="button">Stampa / Salva PDF</button>
+    <button class="btn" id="report-close" type="button">Chiudi</button>
+  </div>
+  <div class="report-page" id="report-body"></div>
+</div>
+
 <script>
 (() => {
   'use strict';
@@ -214,7 +257,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -318,9 +361,9 @@
     return r.text();
   }
   function useText(text, label) {
-    const m = toModel(parseCSV(text));
+    const rawRows = parseCSV(text), m = toModel(rawRows);
     if (!m.recs.length) throw new Error('Il CSV non contiene righe valide.');
-    S.model = m; S.source = label;
+    S.model = m; S.source = label; S.raw = rawRows;
     $('connect').hidden = true; $('main').hidden = false;
     $('source').textContent = 'Sorgente: ' + label;
     render();
@@ -478,7 +521,7 @@
   function renderCharts(inRange, t0, t1) {
     const host = $('charts'); host.replaceChildren();
     const defs = [
-      { title: 'Temperatura', unit: '°C', pick: r => r.tamb, fmt: v => nf1.format(v) + ' °C', minPad: 0.6, nt: 6 },
+      { title: 'Temperatura', unit: '°C', pick: r => r.tamb, fmt: v => nf1.format(v) + ' °C', minPad: 0.6, nt: 6, tset: true },
       { title: 'Umidità relativa', unit: '%', pick: r => r.rh, fmt: v => nf0.format(v) + ' %', minPad: 1.5, nt: 5 },
       { title: 'Batteria (stima)', unit: '%', pick: r => pct(r.mv), fmt: v => nf0.format(v) + ' %', min: 0, max: 100, ticks: [0, 25, 50, 75, 100] },
     ];
@@ -487,14 +530,33 @@
         name: n, color: colorOf(n),
         pts: inRange.filter(r => r.name === n && d.pick(r) != null).map(r => ({ t: r.t, v: d.pick(r) })),
       }));
+      const legendItems = series.map(s => el('span', { style: `--c:${s.color}`, text: s.name }));
+      if (d.tset) {
+        // temperatura impostata (tratteggio) e caldaia accesa (fascia) dietro la temperatura reale
+        for (const n of S.model.names) series.push({ name: n + ' impostata', color: colorOf(n), aux: true,
+          pts: inRange.filter(r => r.name === n && r.tset != null).map(r => ({ t: r.t, v: r.tset })) });
+        d.bands = boilerBands(t0, t1);
+        legendItems.push(el('span', { class: 'dash', style: '--c:var(--ink2)', text: 'Temperatura impostata' }),
+                         el('span', { class: 'band', style: '--c:var(--series-2)', text: 'Caldaia accesa' }));
+      }
       const chart = el('div', { class: 'chart' });
-      const legend = el('div', { class: 'legend' }, series.map(s => el('span', { style: `--c:${s.color}`, text: s.name })));
+      const legend = el('div', { class: 'legend' }, legendItems);
       host.append(el('article', { class: 'card' }, [
         el('div', { class: 'ch-head' }, [el('h2', { text: d.title }), legend]), chart]));
       const draw = () => lineChart(chart, d, series, t0, t1);
       draw();
       new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
     }
+  }
+
+  function boilerBands(t0, t1) {
+    const out = [];
+    for (const p of piecesOf(samplesOf(S.model.recs, null), t0, t1)) {
+      if (!p.on) continue;
+      const l = out[out.length - 1];
+      if (l && p.a <= l[1] + 1) l[1] = p.b; else out.push([p.a, p.b]);
+    }
+    return out;
   }
 
   function lineChart(host, d, series, t0, t1) {
@@ -518,6 +580,10 @@
       s.append(svg('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), style: 'stroke:var(--grid);stroke-width:1' }));
       const tx = svg('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', style: 'fill:var(--muted)' }); tx.textContent = (dec ? nf1 : nf0).format(v); s.append(tx);
     }
+    for (const [a, b] of d.bands || []) {
+      const x = X(Math.max(a, t0)), w = Math.max(1, X(Math.min(b, t1)) - x);
+      s.append(svg('rect', { x, y: m.t, width: w, height: ih, style: 'fill:var(--series-2);opacity:.14' }));
+    }
     s.append(svg('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, style: 'stroke:var(--axis);stroke-width:1' }));
     const long = span > 2 * 86400e3;
     for (let i = 0; i <= 4; i++) {
@@ -534,11 +600,11 @@
       for (const p of sr.pts) { if (seg.length && p.t - seg[seg.length - 1].t > gap) { segs.push(seg); seg = []; } seg.push(p); }
       if (seg.length) segs.push(seg);
       for (const sg of segs) {
-        if (sg.length > 1) s.append(svg('path', { d: sg.map((p, i) => (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(''), fill: 'none', style: `stroke:${sr.color};stroke-width:2`, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
-        else s.append(svg('circle', { cx: X(sg[0].t), cy: Y(sg[0].v), r: 2.5, style: `fill:${sr.color}` }));
+        if (sg.length > 1) s.append(svg('path', { d: sg.map((p, i) => i ? (sr.aux ? `H${X(p.t).toFixed(1)}V${Y(p.v).toFixed(1)}` : 'L' + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)) : 'M' + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(''), fill: 'none', style: `stroke:${sr.color};stroke-width:${sr.aux ? 1.5 : 2}`, 'stroke-dasharray': sr.aux ? '5 4' : '', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+        else if (!sr.aux) s.append(svg('circle', { cx: X(sg[0].t), cy: Y(sg[0].v), r: 2.5, style: `fill:${sr.color}` }));
       }
       const lp = sr.pts[sr.pts.length - 1];
-      if (lp) { ends.push({ sr, lp }); s.append(svg('circle', { cx: X(lp.t), cy: Y(lp.v), r: 4, style: `fill:${sr.color};stroke:var(--surface);stroke-width:2` })); }
+      if (lp && !sr.aux) { ends.push({ sr, lp }); s.append(svg('circle', { cx: X(lp.t), cy: Y(lp.v), r: 4, style: `fill:${sr.color};stroke:var(--surface);stroke-width:2` })); }
     }
     // etichette dirette: solo se non si toccano
     const ys = ends.map(e => Y(e.lp.v)).sort((a, b) => a - b);
@@ -564,7 +630,7 @@
       tip.replaceChildren(el('div', { class: 't', text: fmtDT(t) }));
       series.forEach((sr, k) => {
         const p = sr.pts.find(q => q.t === t);
-        if (p) { dots[k].setAttribute('cx', x); dots[k].setAttribute('cy', Y(p.v)); dots[k].setAttribute('visibility', 'visible'); } else dots[k].setAttribute('visibility', 'hidden');
+        if (p && !sr.aux) { dots[k].setAttribute('cx', x); dots[k].setAttribute('cy', Y(p.v)); dots[k].setAttribute('visibility', 'visible'); } else dots[k].setAttribute('visibility', 'hidden');
         tip.append(el('div', { class: 'r', style: `--c:${sr.color}` }, [el('b', { text: p ? d.fmt(p.v) : '—' }), el('span', { text: sr.name })]));
       });
       tip.hidden = false;
@@ -788,7 +854,7 @@
     host.append(s);
   }
 
-  const consUI = { room: '', setOpen: false };
+  const consUI = { room: '', setOpen: false, sMode: 'week', sMetric: 'h' };
   function renderCons() {
     const host = $('cons'); host.replaceChildren();
     const recs = S.model.recs, names = S.model.names, all = samplesOf(recs, null);
@@ -870,6 +936,8 @@
     t2.append(b2);
     tw.append(el('div', { class: 'scroll', style: 'margin-top:8px' }, [t1, t2])); host.append(tw);
 
+    renderSeason(host, all);
+
     // mappa oraria
     const sel = el('select', { 'aria-label': 'Sorgente mappa oraria' }, [el('option', { value: '', text: 'Caldaia (tutte le zone)' }), ...names.map(n => el('option', { value: n, text: n }))]);
     sel.value = consUI.room;
@@ -910,6 +978,190 @@
       el('div', { class: 'muted', style: 'margin-top:6px', text: 'Le rilevazioni sono orarie, quindi è una stima grossolana. Esempio d’uso: se una stanza impiega 90 minuti per salire di 1 °C e la vuoi a +2 °C alle 7:00, il programma deve partire circa 3 ore prima.' })]));
   }
 
+  /* ---------- andamento stagionale ---------- */
+  const MONTHS = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+  const MON3 = MONTHS.map(m => m.slice(0, 3));
+  const p2 = (n) => String(n).padStart(2, '0');
+  const utcDay = (ds) => { const [y, m, d] = ds.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+  const dayStr = (dt) => `${dt.getUTCFullYear()}-${p2(dt.getUTCMonth() + 1)}-${p2(dt.getUTCDate())}`;
+  function isoWeekOf(ds) {                       // settimana ISO (lunedi' - domenica)
+    const dt = utcDay(ds), dow = (dt.getUTCDay() + 6) % 7;
+    const mon = new Date(dt); mon.setUTCDate(dt.getUTCDate() - dow);
+    const thu = new Date(mon); thu.setUTCDate(mon.getUTCDate() + 3);
+    const y = thu.getUTCFullYear(), jan1 = Date.UTC(y, 0, 1);
+    return { y, w: Math.floor((thu - jan1) / 864e5 / 7) + 1, mon: dayStr(mon) };
+  }
+  function bucketOf(ds, mode) {
+    if (mode === 'month') {
+      const y = +ds.slice(0, 4), m = +ds.slice(5, 7);
+      return { key: ds.slice(0, 7), label: MON3[m - 1], long: `${MONTHS[m - 1]} ${y}`, expected: 24 * new Date(Date.UTC(y, m, 0)).getUTCDate() };
+    }
+    const iw = isoWeekOf(ds);
+    return { key: `${iw.y}-W${p2(iw.w)}`, label: dayLabel(iw.mon), long: `settimana ${iw.w} (dal ${dayLabel(iw.mon)}) ${iw.y}`, expected: 168 };
+  }
+  const prevYearKey = (k) => (+k.slice(0, 4) - 1) + k.slice(4);
+  function bucketStats(days, tm, keys) {
+    let on = 0, obs = 0, hdd = 0, sum = 0, n = 0, td = 0;
+    for (const d of keys) {
+      const v = days.get(d) || [0, 0]; on += v[0]; obs += v[1];
+      if (tm.has(d)) { const w = Math.min(1, v[1] / 24); if (w >= 0.5) td++; hdd += Math.max(0, CFG.hddBase - tm.get(d)) * w; sum += tm.get(d); n++; }
+    }
+    return { on, obs, hdd, toutMean: n ? sum / n : null, toutDays: td };
+  }
+
+  function groupBar(host, items, hasPrev, isEur) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 230; host.dataset.w = host.clientWidth;
+    if (!items.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
+    const m = { l: 40, r: 8, t: 8, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const vals = items.flatMap(x => [x.a, x.b]).filter(v => v != null);
+    const ticks = niceTicks(0, Math.max(1, ...vals), 4), top = ticks[ticks.length - 1];
+    const dec = ticks.some(v => Math.abs(v - Math.round(v)) > 1e-9);
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': isEur ? 'Costo stimato per periodo' : 'Ore di caldaia accesa per periodo' });
+    for (const v of ticks) {
+      const y = m.t + ih - v / top * ih;
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: y + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = (dec ? nf1 : nf0).format(v); s.append(t);
+    }
+    const gw = iw / items.length, bw = Math.max(2, Math.min(26, gw * (hasPrev ? 0.36 : 0.7))), every = Math.ceil(items.length / Math.max(1, Math.floor(iw / 40)));
+    const fv = (v) => isEur ? eur(v) : nf1.format(v) + ' h';
+    items.forEach((it, k) => {
+      const cx = m.l + gw * (k + 0.5);
+      const bars = hasPrev ? [['b', cx - bw - 1, 'var(--series-1)', it.partialB, 'anno prima'], ['a', cx + 1, 'var(--series-2)', it.partialA, 'stagione attuale']] : [['a', cx - bw / 2, 'var(--series-2)', it.partialA, 'stagione attuale']];
+      for (const [f, x, color, partial, lbl] of bars) {
+        const v = it[f]; if (v == null) continue;
+        const h = v / top * ih;
+        const r = svg('rect', { x, y: m.t + ih - h, width: bw, height: Math.max(0, h), rx: 2, fill: color, opacity: partial ? 0.45 : 1 });
+        const tt = svg('title'); tt.textContent = `${it.long} · ${lbl}: ${fv(v)}${partial ? ' (periodo incompleto)' : ''}`; r.append(tt); s.append(r);
+      }
+      if (k % every === 0) { const t = svg('text', { x: cx, y: H - 8, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = it.label; s.append(t); }
+    });
+    s.append(svg('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, stroke: 'var(--axis)' }));
+    host.append(s);
+  }
+
+  function renderSeason(host, all) {
+    const wk = aggregate(all), tm = toutByDay(all), keys = [...wk.days.keys()].sort();
+    if (!keys.length) return;
+    const last = keys[keys.length - 1], sy = +last.slice(0, 4) - (+last.slice(5, 7) < 10 ? 1 : 0);   // la stagione va dal 1 ottobre al 30 settembre
+    const group = (y) => {
+      const g = new Map();
+      for (const d of keys) if (d >= `${y}-10-01` && d < `${y + 1}-10-01`) {
+        const b = bucketOf(d, consUI.sMode); let e = g.get(b.key); if (!e) { e = { ...b, days: [] }; g.set(b.key, e); } e.days.push(d);
+      }
+      return g;
+    };
+    const cur = group(sy), prev = group(sy - 1), eurOk = gasCost(1) != null, isEur = consUI.sMetric === 'eur' && eurOk;
+    const val = (st) => isEur ? gasCost(st.on) : st.on;
+    const rows = [...cur.values()].map(b => {
+      const sa = bucketStats(wk.days, tm, b.days), pb = prev.get(prevYearKey(b.key)), sb = pb ? bucketStats(wk.days, tm, pb.days) : null;
+      return { ...b, sa, sb, a: val(sa), b: sb ? val(sb) : null, partialA: sa.obs < 0.9 * b.expected, partialB: sb ? sb.obs < 0.9 * pb.expected : false };
+    });
+    const hasPrev = rows.some(r => r.sb);
+
+    const seg = (opts, cur_, on) => { const g = el('div', { class: 'seg' }); for (const [v, l, dis] of opts) { const b = el('button', { type: 'button', 'aria-pressed': String(cur_ === v), text: l }); if (dis) { b.disabled = true; b.title = 'Imposta potenza e prezzo del gas'; } b.addEventListener('click', () => on(v)); g.append(b); } return g; };
+    const chart = el('div', { class: 'chart' });
+    const legend = el('div', { class: 'legend' }, [el('span', { style: '--c:var(--series-2)', text: `Stagione ${sy}/${sy + 1}` }), hasPrev ? el('span', { style: '--c:var(--series-1)', text: `Stagione ${sy - 1}/${sy}` }) : null]);
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
+      el('div', { class: 'ch-head' }, [el('h3', { text: 'Andamento stagionale' }),
+        el('div', { class: 'row', style: 'margin:0' }, [
+          seg([['week', 'Settimane'], ['month', 'Mesi']], consUI.sMode, v => { consUI.sMode = v; renderCons(); }),
+          seg([['h', 'Ore'], ['eur', 'Costo', !eurOk]], isEur ? 'eur' : 'h', v => { consUI.sMetric = v; renderCons(); })])]),
+      legend, chart,
+      el('div', { class: 'muted', style: 'margin-top:6px', text: hasPrev ? 'Barre chiare = periodo con dati incompleti. Il confronto è con la stessa settimana o lo stesso mese della stagione precedente.'
+        : 'Dal 1° ottobre. Il confronto con la stessa settimana dell’anno prima comparirà quando avrai i dati della stagione precedente. Barre chiare = periodo incompleto.' })]);
+    host.append(card);
+    const draw = () => groupBar(chart, rows, hasPrev, isEur);
+    draw(); new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
+
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Ore accese', 'Costo', 'T esterna', 'Gradi-giorno', 'Anno prima (ore)', 'Variazione'].map(c => el('th', { text: c })))]));
+    const tb = el('tbody');
+    for (const r of rows.slice().reverse()) {
+      const c = gasCost(r.sa.on), tr = el('tr');
+      [r.long + (r.partialA ? ' *' : ''), nf1.format(r.sa.on), c != null ? eur(c) : '—', r.sa.toutDays ? nf1.format(r.sa.toutMean) + ' °C' : '—', r.sa.toutDays ? nf0.format(r.sa.hdd) : '—',
+       r.sb ? nf1.format(r.sb.on) : '—', r.sb && r.sb.on > 0 && !r.partialA && !r.partialB ? chg(r.sa.on, r.sb.on).replace(/[() ]/g, '') : '—']
+        .forEach((v, i) => tr.append(el('td', { class: i ? 'num' : '', text: v }))); tb.append(tr);
+    }
+    t.append(tb);
+    card.append(el('details', {}, [el('summary', { text: 'Valori per periodo' }), el('div', { class: 'scroll' }, [t]), el('div', { class: 'muted', style: 'margin-top:6px', text: '* periodo incompleto: la variazione è mostrata solo quando entrambi i periodi sono completi.' })]));
+  }
+
+  /* ---------- esportazione ---------- */
+  function csvCell(v) { v = v == null ? '' : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function saveFile(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = el('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  function exportCSV() {
+    if (!S.raw || !S.raw.length) return;
+    const t1 = S.model.recs[S.model.recs.length - 1].t, t0 = S.days ? t1 - S.days * 86400e3 : 0;
+    const head = Object.keys(S.raw[0]), rows = S.raw.filter(r => (utc(r.ts_utc) || 0) >= t0);
+    const label = S.days === 0 ? 'tutto' : S.days === 1 ? '24ore' : S.days + 'giorni';
+    saveFile(`termostati_${dayStr(new Date(t1))}_${label}.csv`, [head.join(','), ...rows.map(r => head.map(h => csvCell(r[h])).join(','))].join('\n') + '\n', 'text/csv;charset=utf-8');
+  }
+
+  /* Riepilogo mensile: pagina stampabile; "Salva come PDF" dal dialogo di stampa (funziona anche su iPhone: Condividi > Salva su File). */
+  function monthList() {
+    const keys = [...aggregate(samplesOf(S.model.recs, null)).days.keys()].map(d => d.slice(0, 7));
+    return [...new Set(keys)].sort().reverse();
+  }
+  const monthLong = (k) => `${MONTHS[+k.slice(5, 7) - 1]} ${k.slice(0, 4)}`;
+  const prevMonthKey = (k) => { const y = +k.slice(0, 4), m = +k.slice(5, 7); return m === 1 ? `${y - 1}-12` : `${y}-${p2(m - 1)}`; };
+
+  function buildReport(mk) {
+    const body = $('report-body'); body.replaceChildren();
+    const recs = S.model.recs, all = samplesOf(recs, null), wk = aggregate(all), tm = toutByDay(all);
+    const dk = [...wk.days.keys()].sort(), daysOf = (k) => dk.filter(d => d.startsWith(k));
+    const cols = [['Questo mese', mk], ['Mese prima', prevMonthKey(mk)], ['Stesso mese anno prima', prevYearKey(mk)]];
+    const st = cols.map(([, k]) => { const ds = daysOf(k); return ds.length ? { ...bucketStats(wk.days, tm, ds), ds } : null; });
+    body.append(el('h1', { text: 'Riepilogo termostati — ' + monthLong(mk) }),
+      el('div', { class: 'muted', text: `Generato il ${fmtDT(Date.now())} · dashboard v${VERSION} · valori di caldaia e costo stimati dal relè` }));
+
+    const kt = el('table', { style: 'margin-top:12px' });
+    kt.append(el('thead', {}, [el('tr', {}, ['', ...cols.map(c => c[0])].map(c => el('th', { text: c })))]));
+    const kb = el('tbody');
+    const line = (lbl, f) => { const tr = el('tr', {}, [el('td', { text: lbl })]); st.forEach(x => tr.append(el('td', { class: 'num', text: x ? (f(x) ?? '—') : '—' }))); kb.append(tr); };
+    const days = (x) => x.obs / 24;
+    line('Ore con caldaia accesa', x => x.obs >= 24 ? nf1.format(x.on) + ' h' : null);
+    line('Ore al giorno', x => x.obs >= 24 ? nf1.format(x.on / days(x)) + ' h' : null);
+    line('Costo stimato', x => x.obs >= 24 && gasCost(x.on) != null ? eur(gasCost(x.on)) : null);
+    line('T esterna media', x => x.toutDays ? nf1.format(x.toutMean) + ' °C' : null);
+    line('Gradi-giorno', x => x.toutDays ? nf0.format(x.hdd) : null);
+    line('Ore per gradogiorno', x => x.toutDays >= 4 && x.hdd >= 5 ? nf2.format(x.on / x.hdd) : null);
+    line('Giorni con dati', x => String(x.ds.length));
+    kt.append(kb); body.append(kt);
+
+    const mrecs = recs.filter(r => romeBucket(r.t).day.startsWith(mk));
+    const tt = el('table', { style: 'margin-top:16px' });
+    tt.append(el('thead', {}, [el('tr', {}, ['Termostato', 'Temp. min / media / max', 'Umidità media', 'Temp. impostata media', 'Batteria (inizio → fine)', 'Richiesta di calore'].map(c => el('th', { text: c })))]));
+    const tbb = el('tbody'), avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+    for (const n of S.model.names) {
+      const s = mrecs.filter(r => r.name === n); if (!s.length) continue;
+      const tv = s.map(r => r.tamb).filter(v => v != null), rv = s.map(r => r.rh).filter(v => v != null), sv = s.map(r => r.tset).filter(v => v != null);
+      const bp = s.map(r => pct(r.mv)).filter(v => v != null), rd = aggregate(samplesOf(recs, n)).days;
+      let on = 0, obs = 0; for (const d of daysOf(mk)) { const v = rd.get(d); if (v) { on += v[0]; obs += v[1]; } }
+      const tr = el('tr', {}, [el('td', { text: n })]);
+      [tv.length ? `${nf1.format(Math.min(...tv))} / ${nf1.format(avg(tv))} / ${nf1.format(Math.max(...tv))} °C` : '—', rv.length ? nf0.format(avg(rv)) + ' %' : '—',
+       sv.length ? nf1.format(avg(sv)) + ' °C' : '—', bp.length ? `${bp[0]}% → ${bp[bp.length - 1]}%` : '—', obs ? `${nf0.format(on / obs * 100)} % del tempo (~${nf0.format(on)} h)` : '—']
+        .forEach(v => tr.append(el('td', { class: 'num', text: v }))); tbb.append(tr);
+    }
+    tt.append(tbb); body.append(tt);
+
+    const bars = el('div', { class: 'chart', style: 'margin-top:16px' });
+    body.append(el('h3', { style: 'margin-top:16px', text: 'Ore di caldaia accesa al giorno' }), bars);
+    const items = daysOf(mk).map(d => ({ day: d, v: wk.days.get(d)[0], partial: wk.days.get(d)[1] < 22 }));
+    requestAnimationFrame(() => barChart(bars, items, 'var(--series-2)'));
+    return st[0] != null;
+  }
+  function openReport(mk) {
+    const sel = $('report-month'); sel.replaceChildren();
+    for (const k of monthList()) sel.append(el('option', { value: k, text: monthLong(k) }));
+    sel.value = mk || sel.options[0].value;
+    $('report').hidden = false; document.documentElement.classList.add('report-open'); buildReport(sel.value);
+  }
+  function closeReport() { $('report').hidden = true; document.documentElement.classList.remove('report-open'); }
+
   /* ---------- eventi ---------- */
   $('range').addEventListener('click', e => {
     const b = e.target.closest('button[data-r]'); if (!b) return;
@@ -940,6 +1192,12 @@
     try { await fetch(location.pathname + location.search, { cache: 'reload' }); } catch { /* si ricarica comunque */ }
     location.reload();   // ricarica l'HTML (appena riscaricato) e quindi anche i dati; token e impostazioni restano nel browser
   });
+  $('btn-csv').addEventListener('click', exportCSV);
+  $('btn-report').addEventListener('click', () => openReport());
+  $('report-month').addEventListener('change', e => buildReport(e.target.value));
+  $('report-print').addEventListener('click', () => window.print());
+  $('report-close').addEventListener('click', closeReport);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('report').hidden) closeReport(); });
   $('btn-source').addEventListener('click', () => showConnect());
   $('btn-theme').addEventListener('click', () => {
     const root = document.documentElement;
