@@ -117,6 +117,8 @@
   footer { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 12px; }
   footer .btn { font-size: 12px; padding: 4px 10px; }
   main.loading { opacity: .6; transition: opacity .15s; }
+  .bico { vertical-align: -2px; margin-right: 6px; }
+  .bico.on { color: var(--series-2); } .bico.off { color: var(--muted); }
   h3 { font-size: 13px; font-weight: 600; margin: 0; }
   .card.inner { background: transparent; padding: 12px; }
   .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-top: 10px; }
@@ -421,13 +423,20 @@
         el('div', { class: 'name' }, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)]),
         el('span', { class: 'chip' }, [el('span', { class: 'ico ' + (online ? 'good' : 'crit'), text: online ? '✓' : '✕' }), online ? 'Online' : 'Offline']),
       ]));
-      const metric = (lbl, val, unit) => el('div', { class: 'metric' }, [
+      const metric = (lbl, val, unit, icon) => el('div', { class: 'metric' }, [
         el('div', { class: 'lbl', text: lbl }),
-        el('div', { class: 'val' }, [document.createTextNode(val), unit ? el('small', { text: ' ' + unit }) : null])]);
+        el('div', { class: 'val' }, [icon || null, document.createTextNode(val), unit ? el('small', { text: ' ' + unit }) : null])]);
+      // fiamma = richiesta di calore in corso, cerchio vuoto = spenta (l'etichetta testuale resta: l'icona non e' l'unico segnale)
+      const flame = (on) => {
+        const s = svg('svg', { class: 'bico ' + (on ? 'on' : 'off'), width: 20, height: 20, viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+        if (on) s.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
+        else s.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
+        return s;
+      };
       card.append(el('div', { class: 'metrics' }, [
         metric('Temperatura', r.tamb == null ? '—' : nf1.format(r.tamb), r.tamb == null ? '' : '°C'),
         metric('Umidità', r.rh == null ? '—' : nf0.format(r.rh), r.rh == null ? '' : '%'),
-        metric('Caldaia', r.relay == null ? '—' : (r.relay ? 'Accesa' : 'Spenta'), ''),
+        metric('Caldaia', r.relay == null ? '—' : (r.relay ? 'Accesa' : 'Spenta'), '', r.relay == null ? null : flame(!!r.relay)),
       ]));
       card.append(el('div', { class: 'bat-row' }, [
         el('span', {}, [el('b', { text: 'Batteria ' + (p == null ? '—' : p + '%') }), el('span', { class: 'muted', text: r.mv == null ? '' : ` (${nf0.format(r.mv)} mV)` })]),
