@@ -26,6 +26,7 @@
   1.5.0  controllo automatico della nuova versione alla riapertura (iOS), blocco zoom, numero di versione
   1.6.0  banner dati fermi configurabile (dataStaleH, default 3 h) e piu' visibile; il monitoraggio avvisa su Telegram di buchi e guasti del cloud
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
+  1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   Regola: PATCH = correzioni, MINOR = nuove funzioni compatibili, MAJOR = cambi che rompono il formato dei dati.
 -->
 <style>
@@ -257,7 +258,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.7.0';
+  const VERSION = '1.8.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -504,6 +505,12 @@
         [el('i', { style: `width:${p == null ? 0 : p}%` })]));
       card.append(el('div', { class: 'foot', text: fc && fc.status === 'ok' ? `Pile da sostituire tra: ${fcLeftText(fc)} (calo ~${nf1.format(-fc.slope)} %/giorno)`
         : fc && fc.status === 'stabile' ? 'Pile: nessun calo misurabile' : 'Previsione pile: servono almeno 7 giorni di dati' }));
+      if (fc && fc.status === 'ok' && fc.daysLeft > 0 && p != null && p >= CFG.warn) {
+        const due = fDay.format(new Date(Date.now() + fc.daysLeft * 864e5));
+        const b = el('button', { class: 'btn', type: 'button', style: 'margin-top:8px;font-size:12px;padding:4px 10px', text: '📅 Aggiungi al calendario' });
+        b.addEventListener('click', () => saveFile(`pile-${n.toLowerCase().replace(/[^a-z0-9]/g, '-')}.ics`, batteryICS(n, due, p), 'text/calendar;charset=utf-8'));
+        card.append(b);
+      }
       card.append(el('div', { class: 'foot', style: 'margin-top:2px', text: r.last ? `Ultimo contatto col cloud: ${fmtDT(r.last)} (${ago(r.last)})` : 'Ultimo contatto non disponibile' }));
       host.append(card);
     }
@@ -1084,6 +1091,20 @@
     }
     t.append(tb);
     card.append(el('details', {}, [el('summary', { text: 'Valori per periodo' }), el('div', { class: 'scroll' }, [t]), el('div', { class: 'muted', style: 'margin-top:6px', text: '* periodo incompleto: la variazione è mostrata solo quando entrambi i periodi sono completi.' })]));
+  }
+
+  /* ---------- promemoria cambio pile (.ics) ---------- */
+  // Stesso formato del file inviato su Telegram: UID fisso per termostato, quindi riaggiungerlo aggiorna l'evento.
+  function batteryICS(name, dueDay, p) {
+    const esc = (t) => t.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-'), ymd = (ds) => ds.replace(/-/g, '');
+    const nextDay = dayStr(new Date(utcDay(dueDay).getTime() + 864e5)), now = new Date();
+    const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//termostati//pile//IT', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      'BEGIN:VEVENT', `UID:pile-${slug}@termostati`, `DTSTAMP:${stamp}`, `SEQUENCE:${Math.floor(now.getTime() / 60000)}`,
+      `DTSTART;VALUE=DATE:${ymd(dueDay)}`, `DTEND;VALUE=DATE:${ymd(nextDay)}`, `SUMMARY:${esc('Cambia le pile - ' + name)}`,
+      `DESCRIPTION:${esc(`Data stimata dal calo osservato: batteria al ${p}% oggi, soglia di avviso raggiunta intorno a questa data.`)}`,
+      'TRANSP:TRANSPARENT', 'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc('Cambia le pile - ' + name)}`, 'TRIGGER:-P2DT15H', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
   }
 
   /* ---------- esportazione ---------- */
