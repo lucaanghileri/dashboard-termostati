@@ -443,7 +443,7 @@
   /* ---------- grafici ---------- */
   function niceTicks(lo, hi, n) {
     const raw = (hi - lo) / n || 1, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
-    const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+    const step = (f <= 1.5 ? 1 : f <= 3 ? 2 : f <= 7 ? 5 : 10) * p;
     const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, out = [];
     for (let v = a; v <= b + step / 2; v += step) out.push(+v.toFixed(10));
     return out;
@@ -452,9 +452,9 @@
   function renderCharts(inRange, t0, t1) {
     const host = $('charts'); host.replaceChildren();
     const defs = [
-      { title: 'Temperatura', unit: '°C', pick: r => r.tamb, fmt: v => nf1.format(v) + ' °C', tickFmt: v => nf0.format(v) },
-      { title: 'Umidità relativa', unit: '%', pick: r => r.rh, fmt: v => nf0.format(v) + ' %', tickFmt: v => nf0.format(v) },
-      { title: 'Batteria (stima)', unit: '%', pick: r => pct(r.mv), fmt: v => nf0.format(v) + ' %', tickFmt: v => nf0.format(v), min: 0, max: 100, ticks: [0, 25, 50, 75, 100] },
+      { title: 'Temperatura', unit: '°C', pick: r => r.tamb, fmt: v => nf1.format(v) + ' °C', minPad: 0.6, nt: 6 },
+      { title: 'Umidità relativa', unit: '%', pick: r => r.rh, fmt: v => nf0.format(v) + ' %', minPad: 1.5, nt: 5 },
+      { title: 'Batteria (stima)', unit: '%', pick: r => pct(r.mv), fmt: v => nf0.format(v) + ' %', min: 0, max: 100, ticks: [0, 25, 50, 75, 100] },
     ];
     for (const d of defs) {
       const series = S.model.names.map(n => ({
@@ -483,13 +483,14 @@
     let lo = Math.min(...all.map(p => p.v)), hi = Math.max(...all.map(p => p.v));
     let ticks;
     if (d.ticks) { ticks = d.ticks; lo = d.min; hi = d.max; }
-    else { const pad = (hi - lo) * 0.15 || 1; ticks = niceTicks(lo - pad, hi + pad, 4); lo = ticks[0]; hi = ticks[ticks.length - 1]; }
+    else { const pad = Math.max((hi - lo) * 0.15, d.minPad || 0) || 1; ticks = niceTicks(lo - pad, hi + pad, d.nt || 4); lo = ticks[0]; hi = ticks[ticks.length - 1]; }
     const X = t => m.l + (t - t0) / span * iw, Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
 
     const s = svg('svg', { width: W, height: H, role: 'img', tabindex: 0, 'aria-label': `${d.title}: andamento nel periodo` });
+    const dec = ticks.some(v => Math.abs(v - Math.round(v)) > 1e-9);   // mezzi gradi (17,5 · 18 · 18,5) quando servono
     for (const v of ticks) {
       s.append(svg('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), style: 'stroke:var(--grid);stroke-width:1' }));
-      const tx = svg('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', style: 'fill:var(--muted)' }); tx.textContent = d.tickFmt(v); s.append(tx);
+      const tx = svg('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', style: 'fill:var(--muted)' }); tx.textContent = (dec ? nf1 : nf0).format(v); s.append(tx);
     }
     s.append(svg('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, style: 'stroke:var(--axis);stroke-width:1' }));
     const long = span > 2 * 86400e3;
