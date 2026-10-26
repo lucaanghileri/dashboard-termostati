@@ -184,7 +184,8 @@
   'use strict';
 
   /* ---------- configurazione (modificabile da config.json) ---------- */
-  const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6 };
+  const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6,
+                     fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7 };   // previsione pile (come lo script Python)
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -341,10 +342,38 @@
 
   function latestOf(name) { const s = seriesOf(name); return s[s.length - 1]; }
 
-  function batStatus(p) {
+  /* Previsione pile: regressione lineare sulle ultime letture (finestra windowDays),
+     che riparte dopo un cambio pile (salto verso l'alto > 10 punti). Stessa logica dello script Python. */
+  const rawPct = (mv) => (mv - CFG.empty) / (CFG.full - CFG.empty) * 100;   // non limitata a 0-100
+  function forecastOf(name) {
+    let pts = S.model.recs.filter(r => r.name === name && r.mv != null).map(r => [r.t / 86400e3, rawPct(r.mv)]);
+    if (!pts.length) return null;
+    const lastT = pts[pts.length - 1][0];
+    pts = pts.filter(q => q[0] >= lastT - CFG.windowDays);
+    let start = 0;
+    for (let i = 1; i < pts.length; i++) if (pts[i][1] - pts[i - 1][1] > 10) start = i;
+    pts = pts.slice(start);
+    const span = pts[pts.length - 1][0] - pts[0][0];
+    if (pts.length < 12 || span < CFG.minDays) return { status: 'insufficiente', span };
+    const n = pts.length, mt = pts.reduce((a, q) => a + q[0], 0) / n, mp = pts.reduce((a, q) => a + q[1], 0) / n;
+    let sxx = 0, sxy = 0;
+    for (const q of pts) { sxx += (q[0] - mt) ** 2; sxy += (q[0] - mt) * (q[1] - mp); }
+    const slope = sxy / sxx, now = mp + slope * (lastT - mt);
+    if (slope > -0.02) return { status: 'stabile', slope, now, span };
+    return { status: 'ok', slope, now, span, daysLeft: Math.max(0, (now - CFG.warn) / -slope) };
+  }
+  function fcLeftText(fc) {
+    if (!fc || fc.status === 'insufficiente') return 'dati in raccolta';
+    if (fc.status === 'stabile') return 'nessun calo misurabile';
+    if (fc.daysLeft > 365) return 'oltre un anno';
+    return fc.daysLeft < 1 ? 'ora' : '~' + nf0.format(fc.daysLeft) + ' giorni';
+  }
+
+  function batStatus(p, fc) {
     if (p == null) return { cls: 'warn', ico: '?', label: 'Dato non disponibile', color: 'var(--warn)' };
     if (p < CFG.warn) return { cls: 'crit', ico: '✕', label: 'Quasi esaurita', color: 'var(--crit)' };
-    if (p < CFG.warn * 2) return { cls: 'warn', ico: '!', label: 'In calo', color: 'var(--warn)' };
+    if (fc && fc.status === 'ok' && fc.daysLeft <= CFG.urgentDays) return { cls: 'crit', ico: '✕', label: 'Da sostituire a breve', color: 'var(--crit)' };
+    if ((fc && fc.status === 'ok' && fc.daysLeft <= CFG.fcDays) || p < CFG.warn * 2) return { cls: 'warn', ico: '!', label: 'In calo', color: 'var(--warn)' };
     return { cls: 'good', ico: '✓', label: 'Ok', color: 'var(--good)' };
   }
 
@@ -357,6 +386,12 @@
     for (const n of S.model.names) {
       const r = latestOf(n); const p = pct(r.mv);
       if (p != null && p < CFG.warn) add('crit', '✕', n + ':', `batteria quasi esaurita (${p}%), sostituisci le pile.`);
+      else {
+        const fc = forecastOf(n);
+        if (fc && fc.status === 'ok' && fc.daysLeft <= CFG.fcDays)
+          add(fc.daysLeft <= CFG.urgentDays ? 'crit' : 'warn', fc.daysLeft <= CFG.urgentDays ? '✕' : '!', n + ':',
+              `pile da sostituire tra circa ${nf0.format(fc.daysLeft)} giorni (calo ~${nf1.format(-fc.slope)} %/giorno).`);
+      }
       if (r.online && r.online !== 'OK') add('crit', '✕', n + ':', `stato online "${r.online}".`);
       if (r.last && Date.now() - r.last > CFG.staleH * 3600e3) add('warn', '!', n + ':', `nessun contatto col cloud da ${ago(r.last).replace(' fa', '')}.`);
     }
@@ -366,7 +401,7 @@
   function renderNow() {
     const host = $('now'); host.replaceChildren();
     for (const n of S.model.names) {
-      const r = latestOf(n); const p = pct(r.mv); const st = batStatus(p);
+      const r = latestOf(n); const p = pct(r.mv); const fc = forecastOf(n); const st = batStatus(p, fc);
       const online = r.online === 'OK';
       const card = el('article', { class: 'card' });
       card.append(el('div', { class: 'th-top' }, [
@@ -387,7 +422,9 @@
       ]));
       card.append(el('div', { class: 'meter', style: `--fill:${st.color}`, role: 'img', 'aria-label': `Batteria ${p == null ? 'non disponibile' : p + '%'}` },
         [el('i', { style: `width:${p == null ? 0 : p}%` })]));
-      card.append(el('div', { class: 'foot', text: r.last ? `Ultimo contatto col cloud: ${fmtDT(r.last)} (${ago(r.last)})` : 'Ultimo contatto non disponibile' }));
+      card.append(el('div', { class: 'foot', text: fc && fc.status === 'ok' ? `Pile da sostituire tra: ${fcLeftText(fc)} (calo ~${nf1.format(-fc.slope)} %/giorno)`
+        : fc && fc.status === 'stabile' ? 'Pile: nessun calo misurabile' : 'Previsione pile: servono almeno 7 giorni di dati' }));
+      card.append(el('div', { class: 'foot', style: 'margin-top:2px', text: r.last ? `Ultimo contatto col cloud: ${fmtDT(r.last)} (${ago(r.last)})` : 'Ultimo contatto non disponibile' }));
       host.append(card);
     }
   }
@@ -509,7 +546,7 @@
   /* ---------- riepilogo e tabella ---------- */
   function renderSummary(inRange) {
     const t = $('summary'); t.replaceChildren();
-    const cols = ['Termostato', 'Temp. min / media / max', 'Umidità media', 'Batteria (inizio → fine)', 'Calo medio', 'Stima alla soglia', 'Caldaia accesa (stima)'];
+    const cols = ['Termostato', 'Temp. min / media / max', 'Umidità media', 'Batteria (inizio → fine)', 'Calo pile (ultimi 30 gg)', 'Pile da sostituire tra', 'Caldaia accesa (stima)'];
     t.append(el('thead', {}, [el('tr', {}, cols.map(c => el('th', { text: c })))]));
     const tb = el('tbody');
     for (const n of S.model.names) {
@@ -518,15 +555,10 @@
       const bp = s.map(r => ({ t: r.t, p: pct(r.mv) })).filter(x => x.p != null);
       const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
       const spanD = (s[s.length - 1].t - s[0].t) / 86400e3;
-      let drop = '—', left = '—';
-      if (bp.length > 1 && spanD >= 1) {
-        const dd = (bp[0].p - bp[bp.length - 1].p) / spanD;
-        if (dd > 0.05) {
-          drop = nf1.format(dd) + ' %/giorno';
-          const last = bp[bp.length - 1].p;
-          left = last <= CFG.warn ? 'già raggiunta' : '~' + nf0.format((last - CFG.warn) / dd) + ' giorni';
-        } else drop = 'stabile';
-      }
+      // calo e previsione: sempre sugli ultimi windowDays, indipendenti dal periodo scelto
+      const fc = forecastOf(n);
+      const drop = !fc ? '—' : fc.status === 'ok' ? nf1.format(-fc.slope) + ' %/giorno' : fc.status === 'stabile' ? 'stabile' : '—';
+      const left = fcLeftText(fc);
       const rl = s.filter(r => r.relay != null);
       const heat = rl.length ? `${nf0.format(rl.filter(r => r.relay).length / rl.length * 100)} % del tempo (~${nf0.format(rl.filter(r => r.relay).length / rl.length * spanD * 24)} h)` : '—';
       const row = el('tr');
