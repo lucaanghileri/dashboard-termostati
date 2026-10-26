@@ -1,0 +1,69 @@
+name: Pubblica dashboard
+
+# Pubblica su GitHub Pages la pagina site/index.html con i dati dei termostati.
+# ATTENZIONE: un sito GitHub Pages e' raggiungibile da chiunque conosca l'URL.
+# I dati pubblicati sono senza ID e numeri di serie dei crono, ma includono
+# temperature, umidita', batteria e orari di accensione della caldaia.
+
+on:
+  workflow_run:
+    workflows: ["Monitor termostati"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      BATTERY_FULL_MV: ${{ vars.BATTERY_FULL_MV }}
+      BATTERY_EMPTY_MV: ${{ vars.BATTERY_EMPTY_MV }}
+      BATTERY_WARN_PCT: ${{ vars.BATTERY_WARN_PCT }}
+      BATTERY_FORECAST_DAYS: ${{ vars.BATTERY_FORECAST_DAYS }}
+      BATTERY_URGENT_DAYS: ${{ vars.BATTERY_URGENT_DAYS }}
+      STALE_HOURS: ${{ vars.STALE_HOURS }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepara il sito (senza ID e numeri di serie)
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/      # pagina, manifest e icone
+          python3 - <<'PY'
+          import csv, json, os
+          keep = ["ts_utc", "name", "online", "last_online_utc", "tamb", "rh",
+                  "relay", "tset", "battery_mv", "comm_level", "t_out"]
+          with open("data/intelliclima_log.csv", newline="", encoding="utf-8") as f, \
+               open("_site/data.csv", "w", newline="", encoding="utf-8") as o:
+              w = csv.DictWriter(o, fieldnames=keep, extrasaction="ignore")
+              w.writeheader()
+              w.writerows(csv.DictReader(f))
+          cfg = {}
+          for env, key in (("BATTERY_FULL_MV", "full"), ("BATTERY_EMPTY_MV", "empty"),
+                           ("BATTERY_WARN_PCT", "warn"), ("STALE_HOURS", "staleH"),
+                           ("BATTERY_FORECAST_DAYS", "fcDays"), ("BATTERY_URGENT_DAYS", "urgentDays")):
+              v = os.environ.get(env, "").strip()
+              if v:
+                  cfg[key] = float(v)
+          json.dump(cfg, open("_site/config.json", "w"))
+          PY
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
