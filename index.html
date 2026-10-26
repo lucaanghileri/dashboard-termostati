@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="robots" content="noindex, nofollow">
 <title>Stato termostati</title>
 <style>
@@ -33,6 +33,7 @@
     --good-text: #0ca30c;
   }
 
+  html { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }   /* niente pinch-zoom ne' doppio tap */
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--page); color: var(--ink);
@@ -908,6 +909,8 @@
     try { useText(await f.text(), 'file locale · ' + f.name); S.remote = null; }
     catch (err) { $('connect-err').textContent = err.message; }
   });
+  // iOS Safari ignora user-scalable=no: si blocca anche il gesto di pinch
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault());
   $('btn-reload').addEventListener('click', async () => {
     const b = $('btn-reload'); b.disabled = true; b.textContent = 'Ricarico…';
     try { await fetch(location.pathname + location.search, { cache: 'reload' }); } catch { /* si ricarica comunque */ }
