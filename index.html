@@ -116,6 +116,13 @@
   footer { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 12px; }
   footer .btn { font-size: 12px; padding: 4px 10px; }
   main.loading { opacity: .6; transition: opacity .15s; }
+  h3 { font-size: 13px; font-weight: 600; margin: 0; }
+  .card.inner { background: transparent; padding: 12px; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-top: 10px; }
+  .kpi .lbl { color: var(--ink2); font-size: 12px; }
+  .kpi .val { font-size: 24px; font-weight: 600; line-height: 1.2; }
+  .fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink2); }
+  .fld input, select { padding: 6px 8px; border: 1px solid var(--axis); border-radius: 8px; background: var(--page); color: var(--ink); font: inherit; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -161,6 +168,8 @@
 
     <section class="grid charts" id="charts" aria-label="Andamento"></section>
 
+    <section class="card" id="cons" style="margin-top:12px" hidden></section>
+
     <section class="card" style="margin-top:12px">
       <h2>Riepilogo del periodo</h2>
       <div class="scroll" style="margin-top:8px"><table id="summary"></table></div>
@@ -185,7 +194,8 @@
 
   /* ---------- configurazione (modificabile da config.json) ---------- */
   const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6,
-                     fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7 };   // previsione pile (come lo script Python)
+                     fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
+                     boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18 };   // consumi (0 = costo non calcolato)
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -255,7 +265,7 @@
     const recs = rows.map(r => ({
       t: utc(r.ts_utc), name: r.name || 'Termostato', online: r.online,
       last: utc(r.last_online_utc), tamb: num(r.tamb), rh: num(r.rh),
-      relay: num(r.relay), tset: num(r.tset), mv: num(r.battery_mv),
+      relay: num(r.relay), tset: num(r.tset), mv: num(r.battery_mv), tout: num(r.t_out),
     })).filter(r => r.t != null && !isNaN(r.t)).sort((a, b) => a.t - b.t);
     const names = [];
     for (const r of recs) if (!names.includes(r.name)) names.push(r.name);   // colore stabile per entita'
@@ -297,7 +307,7 @@
     render();
   }
   async function boot() {
-    await loadConfig();
+    await loadConfig(); loadCons();
     try { useText(await fetchRelative(), 'data.csv'); S.remote = { kind: 'rel' }; return; } catch { /* prova GitHub */ }
     const repo = safe.get('tm_repo'), token = safe.get('tm_token');
     if (repo && token) {
@@ -336,6 +346,7 @@
     const inRange = recs.filter(r => r.t >= t0);
     $('range-info').textContent = `${fmtDT(Math.max(t0, recs[0].t))} → ${fmtDT(t1)}`;
     renderCharts(inRange, Math.max(t0, recs[0].t), t1);
+    renderCons();
     renderSummary(inRange);
     renderRaw(inRange);
   }
@@ -586,6 +597,290 @@
     }
     t.append(tb);
     $('rawnote').textContent = rows.length > MAX ? `Mostrate le ultime ${MAX} righe su ${rows.length} del periodo.` : `${rows.length} righe nel periodo.`;
+  }
+
+  /* ---------- consumi e comfort ---------- */
+  // Stessa logica di "intelliclima_monitor.py consumi": caldaia ACCESA se almeno un relè e' a 1,
+  // ogni campione vale fino al successivo (max 2 h), intervalli spezzati all'ora piena, giorni/ore italiani.
+  const HEAT_CAP = 2 * 3600e3, HOUR = 3600e3;
+  const fDay = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const fHour = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23' });
+  const bucketCache = new Map();
+  function romeBucket(ms) {
+    const k = Math.floor(ms / HOUR);
+    let v = bucketCache.get(k);
+    if (!v) { v = { day: fDay.format(new Date(k * HOUR)), hour: +fHour.format(new Date(k * HOUR)) }; bucketCache.set(k, v); }
+    return v;
+  }
+  const dayLabel = (d) => d.slice(8, 10) + '/' + d.slice(5, 7);
+
+  function samplesOf(recs, room) {
+    const m = new Map();
+    for (const r of recs) {
+      let e = m.get(r.t); if (!e) { e = { on: null, tout: null }; m.set(r.t, e); }
+      if (r.relay != null && (room == null || r.name === room)) { const v = r.relay === 1; e.on = e.on == null ? v : (e.on || v); }
+      if (r.tout != null) e.tout = r.tout;
+    }
+    return m;
+  }
+  function* piecesOf(m, t0, t1) {
+    const ts = [...m.keys()].filter(t => m.get(t).on != null).sort((a, b) => a - b);
+    for (let i = 0; i < ts.length - 1; i++) {
+      const t = ts[i];
+      let a = t, b = t + Math.min(ts[i + 1] - t, HEAT_CAP);
+      if (t0 != null) a = Math.max(a, t0);
+      if (t1 != null) b = Math.min(b, t1);
+      let cur = a;
+      while (cur < b) {
+        const end = Math.min(b, (Math.floor(cur / HOUR) + 1) * HOUR);
+        yield { a: cur, b: end, on: m.get(t).on };
+        cur = end;
+      }
+    }
+  }
+  function aggregate(m, t0, t1) {
+    const days = new Map(), cells = new Map();
+    for (const p of piecesOf(m, t0, t1)) {
+      const bk = romeBucket(p.a), h = (p.b - p.a) / HOUR;
+      const d = days.get(bk.day) || [0, 0]; d[1] += h; if (p.on) d[0] += h; days.set(bk.day, d);
+      const ck = bk.day + '|' + bk.hour, c = cells.get(ck) || [0, 0]; c[1] += h; if (p.on) c[0] += h; cells.set(ck, c);
+    }
+    return { days, cells };
+  }
+  function toutByDay(m, t0, t1) {
+    const acc = new Map();
+    for (const [t, e] of m) {
+      if (e.tout == null || (t0 != null && t < t0) || (t1 != null && t >= t1)) continue;
+      const d = romeBucket(t).day, a = acc.get(d) || [0, 0]; a[0] += e.tout; a[1]++; acc.set(d, a);
+    }
+    return new Map([...acc].map(([d, a]) => [d, a[0] / a[1]]));
+  }
+  function windowStats(m, t0, t1) {
+    const { days } = aggregate(m, t0, t1), tm = toutByDay(m, t0, t1);
+    let on = 0, obs = 0; for (const v of days.values()) { on += v[0]; obs += v[1]; }
+    let hdd = 0, td = 0, sum = 0;
+    for (const [d, mean] of tm) {
+      const w = Math.min(1, (days.get(d) || [0, 0])[1] / 24);
+      if (w >= 0.5) td++;
+      hdd += Math.max(0, CFG.hddBase - mean) * w; sum += mean;
+    }
+    return { on, obs, span: (t1 - t0) / HOUR, toutDays: td, toutMean: tm.size ? sum / tm.size : null, hdd };
+  }
+  const perDay = (s) => s.obs >= 6 ? s.on / (s.obs / 24) : null;
+  const gasCost = (h) => (CFG.boilerKw > 0 && CFG.gasEur > 0 && CFG.gasKwh > 0) ? h * CFG.boilerKw / CFG.gasKwh * CFG.gasEur : null;
+  const nf2 = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const eur = (v) => '€ ' + nf2.format(v);
+  const chg = (c, p) => (c == null || p == null || p <= 0) ? '' : ` (${(c / p - 1) * 100 >= 0 ? '+' : '−'}${nf0.format(Math.abs((c / p - 1) * 100))}%)`;
+
+  function loadCons() {
+    try {
+      const o = JSON.parse(safe.get('tm_cons') || '{}');
+      for (const k of ['boilerKw', 'gasEur', 'gasKwh', 'hddBase']) if (typeof o[k] === 'number' && isFinite(o[k])) CFG[k] = o[k];
+    } catch { /* ignora */ }
+  }
+  const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+
+  // Inerzia: episodi di riscaldamento = campioni consecutivi (<= 2,5 h) con relè acceso; velocita' = (T finale - T iniziale)/tempo.
+  // Le rilevazioni sono orarie: la stima e' grossolana e migliora con i giorni.
+  function inertiaOf(name) {
+    const s = seriesOf(name).filter(r => r.relay != null && r.tamb != null);
+    const heat = [], cool = [];
+    let i = 0;
+    while (i < s.length) {
+      let j = i; const on = s[i].relay === 1;
+      while (j + 1 < s.length && (s[j + 1].relay === 1) === on && s[j + 1].t - s[j].t <= 2.5 * HOUR) j++;
+      if (j > i) {
+        const dt = (s[j].t - s[i].t) / HOUR, dT = s[j].tamb - s[i].tamb;
+        if (on && dT >= 0.3 && dt >= 1) heat.push(dT / dt);
+        if (!on && dT <= -0.3 && dt >= 1) cool.push(-dT / dt);
+      }
+      i = j + 1;
+    }
+    return { heat, cool };
+  }
+
+  function barChart(host, items, color) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 220; host.dataset.w = host.clientWidth;
+    if (!items.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
+    const m = { l: 34, r: 8, t: 8, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const ticks = niceTicks(0, Math.max(1, ...items.map(x => x.v)), 4), top = ticks[ticks.length - 1];
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Ore di caldaia accesa per giorno' });
+    for (const v of ticks) {
+      const y = m.t + ih - v / top * ih;
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: y + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t);
+    }
+    const bw = iw / items.length, every = Math.ceil(items.length / Math.max(1, Math.floor(iw / 44)));
+    items.forEach((it, k) => {
+      const h = it.v / top * ih, x = m.l + k * bw + bw * 0.15;
+      const r = svg('rect', { x, y: m.t + ih - h, width: Math.max(1, bw * 0.7), height: Math.max(0, h), rx: 2, fill: color, opacity: it.partial ? 0.45 : 1 });
+      const tt = svg('title'); tt.textContent = `${dayLabel(it.day)}: ${nf1.format(it.v)} h${it.partial ? ' (dati parziali)' : ''}`; r.append(tt); s.append(r);
+      if (k % every === 0) { const t = svg('text', { x: x + bw * 0.35, y: H - 8, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = dayLabel(it.day); s.append(t); }
+    });
+    host.append(s);
+  }
+
+  function scatterChart(host, pts, color) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 220; host.dataset.w = host.clientWidth;
+    if (pts.length < 3) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Servono almeno 3 giorni completi con temperatura esterna' })); return; }
+    const m = { l: 34, r: 10, t: 8, b: 34 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const xt = niceTicks(Math.min(...pts.map(p => p.x)), Math.max(...pts.map(p => p.x)), 5), yt = niceTicks(0, Math.max(1, ...pts.map(p => p.y)), 4);
+    const x0 = xt[0], x1 = xt[xt.length - 1] || x0 + 1, y1 = yt[yt.length - 1];
+    const X = v => m.l + (v - x0) / ((x1 - x0) || 1) * iw, Y = v => m.t + ih - v / y1 * ih;
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Ore di caldaia contro temperatura esterna media' });
+    for (const v of yt) {
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t);
+    }
+    for (const v of xt) { const t = svg('text', { x: X(v), y: H - 16, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t); }
+    const lab = svg('text', { x: m.l + iw / 2, y: H - 2, 'text-anchor': 'middle', fill: 'var(--ink2)' }); lab.textContent = 'T esterna media del giorno (°C)'; s.append(lab);
+    for (const p of pts) {
+      const c = svg('circle', { cx: X(p.x), cy: Y(p.y), r: 4, fill: color, stroke: 'var(--surface)', 'stroke-width': 1 });
+      const tt = svg('title'); tt.textContent = `${dayLabel(p.day)}: ${nf1.format(p.y)} h con ${nf1.format(p.x)} °C fuori`; c.append(tt); s.append(c);
+    }
+    host.append(s);
+  }
+
+  function heatmap(host, cells, dayList, color) {
+    host.replaceChildren();
+    const cw = 22, ch = 16, ml = 44, mt = 18;
+    const s = svg('svg', { width: ml + 24 * cw + 4, height: mt + dayList.length * ch + 4, role: 'img', 'aria-label': 'Mappa oraria: quota di tempo con caldaia accesa per giorno e ora' });
+    for (let h = 0; h < 24; h += 3) { const t = svg('text', { x: ml + h * cw + cw / 2, y: 12, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = String(h).padStart(2, '0'); s.append(t); }
+    dayList.forEach((d, r) => {
+      const t = svg('text', { x: ml - 6, y: mt + r * ch + 12, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = dayLabel(d); s.append(t);
+      for (let h = 0; h < 24; h++) {
+        const c = cells.get(d + '|' + h), has = c && c[1] >= 0.25, f = has ? Math.min(1, c[0] / c[1]) : 0;
+        const rect = svg('rect', { x: ml + h * cw, y: mt + r * ch, width: cw - 1, height: ch - 1, rx: 2,
+          fill: has ? `color-mix(in srgb, ${color} ${Math.round(f * 100)}%, var(--grid))` : 'none', stroke: has ? 'none' : 'var(--grid)', 'stroke-dasharray': has ? '' : '2 2' });
+        const tt = svg('title'); tt.textContent = has ? `${dayLabel(d)} ${String(h).padStart(2, '0')}:00 — acceso ${nf0.format(f * 100)}% dell'ora` : `${dayLabel(d)} ${String(h).padStart(2, '0')}:00 — nessun dato`;
+        rect.append(tt); s.append(rect);
+      }
+    });
+    host.append(s);
+  }
+
+  const consUI = { room: '', setOpen: false };
+  function renderCons() {
+    const host = $('cons'); host.replaceChildren();
+    const recs = S.model.recs, names = S.model.names, all = samplesOf(recs, null);
+    if (![...all.values()].some(e => e.on != null)) { host.hidden = true; return; }
+    host.hidden = false;
+    const tmax = Math.max(...all.keys()), D = 86400e3;
+    const cur = windowStats(all, tmax - 7 * D, tmax), prev = windowStats(all, tmax - 14 * D, tmax - 7 * D);
+    const pc = perDay(cur), pp = prev.obs >= 24 ? perDay(prev) : null;
+    const cost = gasCost(cur.on), costP = pp != null ? gasCost(prev.on) : null;
+
+    host.append(el('div', { class: 'ch-head' }, [el('h2', { text: 'Consumi e comfort' }), el('span', { class: 'muted', text: 'Stime: il relè indica la richiesta di calore, non il gas realmente bruciato' })]));
+
+    // KPI ultimi 7 giorni
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    if (cur.obs >= 24) {
+      kpi.append(tile('Caldaia accesa, 7 giorni', `${nf1.format(cur.on)} h`, `${nf1.format(pc)} h/giorno${pp != null ? `, prima ${nf1.format(pp)}${chg(pc, pp)}` : ''}`));
+      kpi.append(tile('Costo stimato, 7 giorni', cost != null ? eur(cost) : '—', cost != null ? (costP != null ? `prima ${eur(costP)}` : '') : 'imposta potenza e prezzo del gas'));
+      if (cur.toutDays) {
+        let sub = '';
+        if (cur.toutDays >= 4 && cur.hdd >= 5) { sub = `${nf0.format(cur.hdd)} gradi-giorno · ${nf2.format(cur.on / cur.hdd)} h per gradogiorno`; if (prev.toutDays >= 4 && prev.hdd >= 5) sub += ` (prima ${nf2.format(prev.on / prev.hdd)})`; }
+        kpi.append(tile('T esterna media, 7 giorni', `${nf1.format(cur.toutMean)} °C`, sub));
+      } else kpi.append(tile('T esterna media', '—', 'compare dopo la prima raccolta con LATITUDE/LONGITUDE'));
+    } else kpi.append(tile('Dati insufficienti', '—', 'servono almeno 24 ore di rilevazioni'));
+    host.append(kpi);
+    if (cur.obs >= 24 && cur.obs < 0.9 * cur.span) host.append(el('div', { class: 'muted', style: 'margin-top:6px', text: `Dati disponibili per il ${nf0.format(cur.obs / cur.span * 100)}% del periodo.` }));
+
+    // impostazioni
+    const set = el('details', {}, [el('summary', { text: 'Impostazioni costo' })]);
+    if (consUI.setOpen) set.open = true;
+    set.addEventListener('toggle', () => { consUI.setOpen = set.open; });
+    const form = el('div', { class: 'row' });
+    const fld = (key, lbl, step) => {
+      const inp = el('input', { type: 'number', min: '0', step, value: String(CFG[key]), style: 'width:110px' });
+      inp.addEventListener('change', () => {
+        const v = parseFloat(String(inp.value).replace(',', '.'));
+        if (!isFinite(v) || v < 0) { inp.value = String(CFG[key]); return; }
+        CFG[key] = v;
+        let o = {}; try { o = JSON.parse(safe.get('tm_cons') || '{}'); } catch { /* ignora */ }
+        o[key] = v; safe.set('tm_cons', JSON.stringify(o)); renderCons();
+      });
+      return el('label', { class: 'fld' }, [lbl, inp]);
+    };
+    form.append(fld('boilerKw', 'Potenza caldaia (kW)', '0.5'), fld('gasEur', 'Prezzo gas (€/Smc)', '0.01'), fld('gasKwh', 'kWh per Smc', '0.1'), fld('hddBase', 'Base gradi-giorno (°C)', '0.5'));
+    set.append(form, el('div', { class: 'muted', style: 'margin-top:6px', text: 'Costo = ore × kW ÷ kWh/Smc × €/Smc. Usa la potenza al focolare (targhetta). Salvate in questo browser; per renderle fisse usa le Variables del repository (BOILER_KW, GAS_EUR_SMC…) per il report Telegram.' }));
+    host.append(set);
+
+    // grafici giornalieri
+    const wk = aggregate(all), tm = toutByDay(all);
+    const dayKeys = [...wk.days.keys()].sort();
+    const last30 = dayKeys.slice(-30).map(d => ({ day: d, v: wk.days.get(d)[0], obs: wk.days.get(d)[1], partial: wk.days.get(d)[1] < 22 }));
+    const color = 'var(--series-2)';
+    const cd = el('div', { class: 'chart' }), cs = el('div', { class: 'chart' });
+    const sc = dayKeys.filter(d => tm.has(d) && wk.days.get(d)[1] >= 20).map(d => ({ day: d, x: tm.get(d), y: wk.days.get(d)[0] }));
+    host.append(el('div', { class: 'grid charts', style: 'margin-top:12px' }, [
+      el('article', { class: 'card inner' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Ore di caldaia accesa al giorno' }), el('span', { class: 'muted', text: 'barre chiare = giorno incompleto' })]), cd]),
+      el('article', { class: 'card inner' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Caldaia contro freddo esterno' }), el('span', { class: 'muted', text: 'un punto = un giorno completo' })]), cs]),
+    ]));
+    const dd = () => barChart(cd, last30, color), ds = () => scatterChart(cs, sc, color);
+    dd(); ds();
+    new ResizeObserver(() => { if (cd.dataset.w != cd.clientWidth) dd(); if (cs.dataset.w != cs.clientWidth) ds(); }).observe(cd);
+
+    // tabella gemella giornaliera + confronto settimanale
+    const tw = el('details', {}, [el('summary', { text: 'Dati per giorno e confronto settimana su settimana' })]);
+    const t1 = el('table'); t1.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Ore accese', 'Ore/giorno', 'T esterna', 'Gradi-giorno', 'Ore per gradogiorno', 'Costo'].map(c => el('th', { text: c })))]));
+    const b1 = el('tbody');
+    for (const [lbl, st] of [['Ultimi 7 giorni', cur], ['7 giorni prima', prev]]) {
+      const ok = st.obs >= 24, eff = ok && st.toutDays >= 4 && st.hdd >= 5 ? nf2.format(st.on / st.hdd) : '—', c = ok ? gasCost(st.on) : null;
+      const tr = el('tr'); [lbl, ok ? nf1.format(st.on) : '—', ok ? nf1.format(perDay(st)) : '—', st.toutDays ? nf1.format(st.toutMean) + ' °C' : '—', st.toutDays ? nf0.format(st.hdd) : '—', eff, c != null ? eur(c) : '—']
+        .forEach((v, i) => tr.append(el('td', { class: i ? 'num' : '', text: v }))); b1.append(tr);
+    }
+    t1.append(b1);
+    const t2 = el('table', { style: 'margin-top:12px' }); t2.append(el('thead', {}, [el('tr', {}, ['Giorno', 'Ore accese', 'Ore osservate', 'T esterna', 'Costo'].map(c => el('th', { text: c })))]));
+    const b2 = el('tbody');
+    for (const d of dayKeys.slice(-30).reverse()) {
+      const v = wk.days.get(d), c = gasCost(v[0]), tr = el('tr');
+      [dayLabel(d), nf1.format(v[0]), nf1.format(v[1]), tm.has(d) ? nf1.format(tm.get(d)) + ' °C' : '—', c != null ? eur(c) : '—'].forEach((x, i) => tr.append(el('td', { class: i ? 'num' : '', text: x }))); b2.append(tr);
+    }
+    t2.append(b2);
+    tw.append(el('div', { class: 'scroll', style: 'margin-top:8px' }, [t1, t2])); host.append(tw);
+
+    // mappa oraria
+    const sel = el('select', { 'aria-label': 'Sorgente mappa oraria' }, [el('option', { value: '', text: 'Caldaia (tutte le zone)' }), ...names.map(n => el('option', { value: n, text: n }))]);
+    sel.value = consUI.room;
+    const hm = el('div', { class: 'scroll' });
+    const hmCard = el('article', { class: 'card inner', style: 'margin-top:12px' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Mappa oraria (ultimi 28 giorni)' }), sel]), hm,
+      el('div', { class: 'muted', style: 'margin-top:6px', text: 'Più scuro = più minuti con richiesta di calore in quell’ora. Tratteggiato = nessun dato.' })]);
+    host.append(hmCard);
+    const drawHM = () => {
+      const m = samplesOf(recs, consUI.room || null), { cells, days } = aggregate(m), list = [...days.keys()].sort().slice(-28);
+      heatmap(hm, cells, list, color);
+      let twin = hmCard.querySelector('details'); if (twin) twin.remove();
+      const tbl = el('table'); tbl.append(el('thead', {}, [el('tr', {}, ['Giorno', ...Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'))].map(c => el('th', { text: c })))]));
+      const tb = el('tbody');
+      for (const d of list.slice().reverse()) {
+        const tr = el('tr', {}, [el('td', { text: dayLabel(d) })]);
+        for (let h = 0; h < 24; h++) { const c = cells.get(d + '|' + h); tr.append(el('td', { class: 'num', text: c && c[1] >= 0.25 ? nf0.format(c[0] / c[1] * 100) : '·' })); }
+        tb.append(tr);
+      }
+      tbl.append(tb);
+      hmCard.append(el('details', {}, [el('summary', { text: 'Valori della mappa (% dell’ora con caldaia accesa)' }), el('div', { class: 'scroll' }, [tbl])]));
+    };
+    sel.addEventListener('change', () => { consUI.room = sel.value; drawHM(); });
+    drawHM();
+
+    // inerzia termica
+    const inn = el('table'); inn.append(el('thead', {}, [el('tr', {}, ['Stanza', 'Per salire di 1 °C', 'Per salire di 2 °C', 'Raffreddamento', 'Episodi'].map(c => el('th', { text: c })))]));
+    const ib = el('tbody');
+    for (const n of names) {
+      const { heat, cool } = inertiaOf(n), ok = heat.length >= 5, rate = ok ? median(heat) : null, cr = cool.length >= 5 ? median(cool) : null;
+      const fm = (min) => min >= 90 ? `${nf1.format(min / 60)} h` : `${nf0.format(min)} min`;
+      const tr = el('tr', {}, [el('td', {}, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)])]);
+      [rate ? fm(60 / rate) : '—', rate ? fm(120 / rate) : '—', cr ? `−${nf1.format(cr)} °C/h` : '—', ok ? `${heat.length} salita · ${cool.length} discesa` : `${heat.length} (ne servono 5)`]
+        .forEach(v => tr.append(el('td', { class: 'num', text: v }))); ib.append(tr);
+    }
+    inn.append(ib);
+    host.append(el('article', { class: 'card inner', style: 'margin-top:12px' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Inerzia termica' }), el('span', { class: 'muted', text: 'mediana degli episodi con caldaia accesa' })]),
+      el('div', { class: 'scroll' }, [inn]),
+      el('div', { class: 'muted', style: 'margin-top:6px', text: 'Le rilevazioni sono orarie, quindi è una stima grossolana. Esempio d’uso: se una stanza impiega 90 minuti per salire di 1 °C e la vuoi a +2 °C alle 7:00, il programma deve partire circa 3 ore prima.' })]));
   }
 
   /* ---------- eventi ---------- */
