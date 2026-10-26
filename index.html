@@ -133,6 +133,7 @@
       <h1>Stato termostati</h1>
       <div class="sub" id="updated">Caricamento…</div>
     </div>
+    <button class="btn" id="btn-reload" type="button" title="Ricarica pagina e dati, ignorando la cache">↻ Ricarica</button>
   </header>
 
   <section class="panel" id="connect" hidden>
@@ -906,6 +907,11 @@
     const f = e.target.files[0]; if (!f) return;
     try { useText(await f.text(), 'file locale · ' + f.name); S.remote = null; }
     catch (err) { $('connect-err').textContent = err.message; }
+  });
+  $('btn-reload').addEventListener('click', async () => {
+    const b = $('btn-reload'); b.disabled = true; b.textContent = 'Ricarico…';
+    try { await fetch(location.pathname + location.search, { cache: 'reload' }); } catch { /* si ricarica comunque */ }
+    location.reload();   // ricarica l'HTML (appena riscaricato) e quindi anche i dati; token e impostazioni restano nel browser
   });
   $('btn-source').addEventListener('click', () => showConnect());
   $('btn-theme').addEventListener('click', () => {
