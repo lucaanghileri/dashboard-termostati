@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Stato termostati</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+    --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; --good-text: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #f0efec; --ink2: #c3c2b7;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --good-text: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #f0efec; --ink2: #c3c2b7;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --good-text: #0ca30c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .muted { color: var(--muted); }
+  .sec { color: var(--ink2); }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .sub { color: var(--ink2); margin-top: 2px; }
+
+  .alerts { display: grid; gap: 8px; margin-bottom: 16px; }
+  .alert { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: baseline; }
+  .alert b { font-weight: 600; }
+  .ico { font-weight: 700; display: inline-block; min-width: 1.2em; text-align: center; }
+  .ico.good { color: var(--good-text); } .ico.warn { color: #b87a00; } .ico.crit { color: var(--crit); }
+  :root[data-theme="dark"] .ico.warn { color: var(--warn); }
+  @media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .ico.warn { color: var(--warn); } }
+
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+  .grid.charts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
+  .grid.charts > .card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+
+  .th-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
+  .name { font-size: 16px; font-weight: 600; }
+  .chip { font-size: 12px; color: var(--ink2); white-space: nowrap; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .metric .lbl { color: var(--ink2); font-size: 12px; }
+  .metric .val { font-size: 26px; font-weight: 600; line-height: 1.15; }
+  .metric .val small { font-size: 14px; font-weight: 500; color: var(--ink2); }
+  .bat-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .meter { height: 8px; border-radius: 4px; position: relative; overflow: hidden; }
+  .meter::before { content: ""; position: absolute; inset: 0; background: var(--fill); opacity: .18; }
+  .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fill); border-radius: 4px; }
+  .foot { margin-top: 12px; color: var(--muted); font-size: 12px; }
+
+  .filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .seg button[aria-pressed="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); font-weight: 600; }
+
+  .ch-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink2); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 2px; background: var(--c); margin-right: 6px; vertical-align: middle; border-radius: 1px; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; touch-action: pan-y; }
+  .chart svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 8px; padding: 8px 10px; font-size: 12px; min-width: 150px; z-index: 2; }
+  .tip .t { color: var(--ink2); margin-bottom: 4px; }
+  .tip .r { display: flex; align-items: baseline; gap: 6px; }
+  .tip .r::before { content: ""; width: 10px; height: 2px; background: var(--c); align-self: center; border-radius: 1px; }
+  .tip .r b { font-size: 13px; font-weight: 600; }
+  .tip .r span { color: var(--ink2); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { color: var(--ink2); font-weight: 500; }
+  td.num, th.num { font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .panel p { margin: 4px 0 12px; color: var(--ink2); }
+  .panel label { display: block; margin: 8px 0 4px; font-weight: 600; font-size: 13px; }
+  .panel input[type=text], .panel input[type=password] { width: 100%; max-width: 420px; padding: 8px 10px; border: 1px solid var(--axis); border-radius: 8px; background: var(--page); }
+  .btn { border: 1px solid var(--axis); background: var(--page); border-radius: 8px; padding: 7px 14px; }
+  .btn.primary { background: var(--ink); color: var(--page); border-color: var(--ink); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .err { color: var(--crit); margin-top: 8px; }
+  footer { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 12px; }
+  footer .btn { font-size: 12px; padding: 4px 10px; }
+  main.loading { opacity: .6; transition: opacity .15s; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Stato termostati</h1>
+      <div class="sub" id="updated">Caricamento…</div>
+    </div>
+  </header>
+
+  <section class="panel" id="connect" hidden>
+    <h2>Collega i dati</h2>
+    <p id="connect-msg">Non trovo <code>data.csv</code> accanto a questa pagina. Puoi leggere il CSV direttamente dal repository GitHub privato oppure aprire un file CSV dal tuo computer.</p>
+    <label for="repo">Repository (proprietario/nome)</label>
+    <input type="text" id="repo" placeholder="mio-utente/termostati" autocomplete="off">
+    <label for="token">Token GitHub di sola lettura</label>
+    <input type="password" id="token" placeholder="github_pat_…" autocomplete="off">
+    <p class="muted" style="margin:6px 0 0">Crea un token fine-grained limitato a questo repository con permesso <b>Contents: Read-only</b>. Resta solo in questo browser e viene usato solo per leggere il CSV da api.github.com.</p>
+    <div class="row">
+      <button class="btn primary" id="btn-connect" type="button">Collega</button>
+      <label class="btn" for="file" style="margin:0;font-weight:400">Apri un CSV locale…</label>
+      <input type="file" id="file" accept=".csv,text/csv" hidden>
+    </div>
+    <div class="err" id="connect-err" role="alert"></div>
+  </section>
+
+  <main id="main" hidden>
+    <div class="alerts" id="alerts" aria-live="polite"></div>
+    <section class="grid" id="now" aria-label="Stato attuale"></section>
+
+    <div class="filters" role="group" aria-label="Intervallo di tempo">
+      <span class="sec">Periodo</span>
+      <div class="seg" id="range">
+        <button type="button" data-r="1" aria-pressed="false">24 ore</button>
+        <button type="button" data-r="7" aria-pressed="true">7 giorni</button>
+        <button type="button" data-r="30" aria-pressed="false">30 giorni</button>
+        <button type="button" data-r="0" aria-pressed="false">Tutto</button>
+      </div>
+      <span class="muted" id="range-info"></span>
+    </div>
+
+    <section class="grid charts" id="charts" aria-label="Andamento"></section>
+
+    <section class="card" style="margin-top:12px">
+      <h2>Riepilogo del periodo</h2>
+      <div class="scroll" style="margin-top:8px"><table id="summary"></table></div>
+      <details>
+        <summary>Tabella dati</summary>
+        <div class="scroll"><table id="rawtable"></table></div>
+        <div class="muted" id="rawnote" style="margin-top:6px"></div>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span id="source"></span>
+    <button class="btn" id="btn-source" type="button">Cambia sorgente dati</button>
+    <button class="btn" id="btn-theme" type="button">Tema</button>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- configurazione (modificabile da config.json) ---------- */
+  const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6 };
+  const CFG = { ...DEFAULTS };
+  const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
+  const TZ = 'Europe/Rome';
+
+  /* ---------- utilita' ---------- */
+  const $ = (id) => document.getElementById(id);
+  const NS = 'http://www.w3.org/2000/svg';
+  const nf0 = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 0 });
+  const nf1 = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const parts = new Intl.DateTimeFormat('it-IT', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const fHM = new Intl.DateTimeFormat('it-IT', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const fDM = new Intl.DateTimeFormat('it-IT', { timeZone: TZ, day: '2-digit', month: '2-digit' });
+  function fmtDT(ms) {
+    const p = Object.fromEntries(parts.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+    return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}`;
+  }
+  function ago(ms) {
+    const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (m < 60) return `${m} min fa`;
+    const h = Math.round(m / 60);
+    if (h < 48) return `${h} ore fa`;
+    return `${Math.round(h / 24)} giorni fa`;
+  }
+  function el(tag, attrs = {}, kids = []) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'text') e.textContent = v; else e.setAttribute(k, v);
+    }
+    for (const k of [].concat(kids)) if (k != null) e.append(k);
+    return e;
+  }
+  function svg(tag, attrs = {}) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+  }
+  const safe = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignora */ } },
+  };
+  const pct = (mv) => mv == null ? null : Math.max(0, Math.min(100, Math.round((mv - CFG.empty) / (CFG.full - CFG.empty) * 100)));
+
+  /* ---------- CSV ---------- */
+  function parseCSV(text) {
+    const out = []; let row = [], cur = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cur); cur = '';
+        if (row.length > 1 || row[0] !== '') out.push(row);
+        row = [];
+      } else cur += c;
+    }
+    if (cur !== '' || row.length) { row.push(cur); out.push(row); }
+    const head = out.shift() || [];
+    return out.map(r => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+  }
+  const num = (s) => (s === '' || s == null || isNaN(+s)) ? null : +s;
+  const utc = (s) => s ? Date.parse(s.replace(' ', 'T') + 'Z') : null;
+
+  function toModel(rows) {
+    const recs = rows.map(r => ({
+      t: utc(r.ts_utc), name: r.name || 'Termostato', online: r.online,
+      last: utc(r.last_online_utc), tamb: num(r.tamb), rh: num(r.rh),
+      relay: num(r.relay), tset: num(r.tset), mv: num(r.battery_mv),
+    })).filter(r => r.t != null && !isNaN(r.t)).sort((a, b) => a.t - b.t);
+    const names = [];
+    for (const r of recs) if (!names.includes(r.name)) names.push(r.name);   // colore stabile per entita'
+    return { recs, names };
+  }
+
+  /* ---------- stato ---------- */
+  const S = { model: null, days: 7, source: '', remote: null };
+
+  /* ---------- caricamento dati ---------- */
+  async function loadConfig() {
+    try {
+      const r = await fetch('config.json', { cache: 'no-store' });
+      if (!r.ok) return;
+      const c = await r.json();
+      for (const k of Object.keys(DEFAULTS)) if (typeof c[k] === 'number' && isFinite(c[k])) CFG[k] = c[k];
+    } catch { /* config opzionale */ }
+  }
+  async function fetchRelative() {
+    const r = await fetch('data.csv?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('data.csv non trovato');
+    return r.text();
+  }
+  async function fetchGitHub(repo, token) {
+    const r = await fetch(`https://api.github.com/repos/${repo}/contents/${CSV_PATH}`, {
+      headers: { Accept: 'application/vnd.github.raw+json', Authorization: `Bearer ${token}` },
+    });
+    if (r.status === 401 || r.status === 403) throw new Error('Token non valido o senza permesso di lettura (401/403).');
+    if (r.status === 404) throw new Error(`File ${CSV_PATH} non trovato in ${repo} (oppure il token non vede il repository).`);
+    if (!r.ok) throw new Error('Errore GitHub ' + r.status);
+    return r.text();
+  }
+  function useText(text, label) {
+    const m = toModel(parseCSV(text));
+    if (!m.recs.length) throw new Error('Il CSV non contiene righe valide.');
+    S.model = m; S.source = label;
+    $('connect').hidden = true; $('main').hidden = false;
+    $('source').textContent = 'Sorgente: ' + label;
+    render();
+  }
+  async function boot() {
+    await loadConfig();
+    try { useText(await fetchRelative(), 'data.csv'); S.remote = { kind: 'rel' }; return; } catch { /* prova GitHub */ }
+    const repo = safe.get('tm_repo'), token = safe.get('tm_token');
+    if (repo && token) {
+      try { useText(await fetchGitHub(repo, token), 'GitHub · ' + repo); S.remote = { kind: 'gh', repo, token }; return; }
+      catch (e) { showConnect(e.message); return; }
+    }
+    showConnect();
+  }
+  function showConnect(err) {
+    $('connect').hidden = false;
+    $('repo').value = safe.get('tm_repo') || '';
+    $('connect-err').textContent = err || '';
+    $('updated').textContent = 'Nessun dato caricato';
+  }
+  async function refresh() {
+    if (!S.remote) return;
+    $('main').classList.add('loading');
+    try {
+      const text = S.remote.kind === 'rel' ? await fetchRelative() : await fetchGitHub(S.remote.repo, S.remote.token);
+      useText(text, S.source);
+    } catch { /* tiene l'ultimo render */ }
+    $('main').classList.remove('loading');
+  }
+
+  /* ---------- render ---------- */
+  function seriesOf(name) { return S.model.recs.filter(r => r.name === name); }
+  function colorOf(name) { return `var(--series-${(S.model.names.indexOf(name) % 4) + 1})`; }
+
+  function render() {
+    const { recs, names } = S.model;
+    const lastT = recs[recs.length - 1].t;
+    $('updated').textContent = `Ultimo dato ${fmtDT(lastT)} · ${ago(lastT)}`;
+    renderAlerts();
+    renderNow();
+    const t1 = lastT, t0 = S.days ? t1 - S.days * 86400e3 : recs[0].t;
+    const inRange = recs.filter(r => r.t >= t0);
+    $('range-info').textContent = `${fmtDT(Math.max(t0, recs[0].t))} → ${fmtDT(t1)}`;
+    renderCharts(inRange, Math.max(t0, recs[0].t), t1);
+    renderSummary(inRange);
+    renderRaw(inRange);
+  }
+
+  function latestOf(name) { const s = seriesOf(name); return s[s.length - 1]; }
+
+  function batStatus(p) {
+    if (p == null) return { cls: 'warn', ico: '?', label: 'Dato non disponibile', color: 'var(--warn)' };
+    if (p < CFG.warn) return { cls: 'crit', ico: '✕', label: 'Quasi esaurita', color: 'var(--crit)' };
+    if (p < CFG.warn * 2) return { cls: 'warn', ico: '!', label: 'In calo', color: 'var(--warn)' };
+    return { cls: 'good', ico: '✓', label: 'Ok', color: 'var(--good)' };
+  }
+
+  function renderAlerts() {
+    const box = $('alerts'); box.replaceChildren();
+    const add = (cls, ico, title, text) => box.append(el('div', { class: 'alert' }, [
+      el('span', { class: 'ico ' + cls, text: ico }), el('span', {}, [el('b', { text: title + ' ' }), text])]));
+    const newest = S.model.recs[S.model.recs.length - 1].t;
+    if (Date.now() - newest > 3 * 3600e3) add('warn', '!', 'Dati non aggiornati:', `l'ultima rilevazione risale a ${ago(newest)}. Controlla il workflow su GitHub.`);
+    for (const n of S.model.names) {
+      const r = latestOf(n); const p = pct(r.mv);
+      if (p != null && p < CFG.warn) add('crit', '✕', n + ':', `batteria quasi esaurita (${p}%), sostituisci le pile.`);
+      if (r.online && r.online !== 'OK') add('crit', '✕', n + ':', `stato online "${r.online}".`);
+      if (r.last && Date.now() - r.last > CFG.staleH * 3600e3) add('warn', '!', n + ':', `nessun contatto col cloud da ${ago(r.last).replace(' fa', '')}.`);
+    }
+    if (!box.children.length) add('good', '✓', 'Tutto regolare:', 'batterie, connessione e rilevazioni sono nella norma.');
+  }
+
+  function renderNow() {
+    const host = $('now'); host.replaceChildren();
+    for (const n of S.model.names) {
+      const r = latestOf(n); const p = pct(r.mv); const st = batStatus(p);
+      const online = r.online === 'OK';
+      const card = el('article', { class: 'card' });
+      card.append(el('div', { class: 'th-top' }, [
+        el('div', { class: 'name' }, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)]),
+        el('span', { class: 'chip' }, [el('span', { class: 'ico ' + (online ? 'good' : 'crit'), text: online ? '✓' : '✕' }), online ? 'Online' : 'Offline']),
+      ]));
+      const metric = (lbl, val, unit) => el('div', { class: 'metric' }, [
+        el('div', { class: 'lbl', text: lbl }),
+        el('div', { class: 'val' }, [document.createTextNode(val), unit ? el('small', { text: ' ' + unit }) : null])]);
+      card.append(el('div', { class: 'metrics' }, [
+        metric('Temperatura', r.tamb == null ? '—' : nf1.format(r.tamb), r.tamb == null ? '' : '°C'),
+        metric('Umidità', r.rh == null ? '—' : nf0.format(r.rh), r.rh == null ? '' : '%'),
+        metric('Caldaia', r.relay == null ? '—' : (r.relay ? 'Accesa' : 'Spenta'), ''),
+      ]));
+      card.append(el('div', { class: 'bat-row' }, [
+        el('span', {}, [el('b', { text: 'Batteria ' + (p == null ? '—' : p + '%') }), el('span', { class: 'muted', text: r.mv == null ? '' : ` (${nf0.format(r.mv)} mV)` })]),
+        el('span', { class: 'chip' }, [el('span', { class: 'ico ' + st.cls, text: st.ico }), st.label]),
+      ]));
+      card.append(el('div', { class: 'meter', style: `--fill:${st.color}`, role: 'img', 'aria-label': `Batteria ${p == null ? 'non disponibile' : p + '%'}` },
+        [el('i', { style: `width:${p == null ? 0 : p}%` })]));
+      card.append(el('div', { class: 'foot', text: r.last ? `Ultimo contatto col cloud: ${fmtDT(r.last)} (${ago(r.last)})` : 'Ultimo contatto non disponibile' }));
+      host.append(card);
+    }
+  }
+
+  /* ---------- grafici ---------- */
+  function niceTicks(lo, hi, n) {
+    const raw = (hi - lo) / n || 1, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    const step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+    const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, out = [];
+    for (let v = a; v <= b + step / 2; v += step) out.push(+v.toFixed(10));
+    return out;
+  }
+
+  function renderCharts(inRange, t0, t1) {
+    const host = $('charts'); host.replaceChildren();
+    const defs = [
+      { title: 'Temperatura', unit: '°C', pick: r => r.tamb, fmt: v => nf1.format(v) + ' °C', tickFmt: v => nf0.format(v) },
+      { title: 'Umidità relativa', unit: '%', pick: r => r.rh, fmt: v => nf0.format(v) + ' %', tickFmt: v => nf0.format(v) },
+      { title: 'Batteria (stima)', unit: '%', pick: r => pct(r.mv), fmt: v => nf0.format(v) + ' %', tickFmt: v => nf0.format(v), min: 0, max: 100, ticks: [0, 25, 50, 75, 100] },
+    ];
+    for (const d of defs) {
+      const series = S.model.names.map(n => ({
+        name: n, color: colorOf(n),
+        pts: inRange.filter(r => r.name === n && d.pick(r) != null).map(r => ({ t: r.t, v: d.pick(r) })),
+      }));
+      const chart = el('div', { class: 'chart' });
+      const legend = el('div', { class: 'legend' }, series.map(s => el('span', { style: `--c:${s.color}`, text: s.name })));
+      host.append(el('article', { class: 'card' }, [
+        el('div', { class: 'ch-head' }, [el('h2', { text: d.title }), legend]), chart]));
+      const draw = () => lineChart(chart, d, series, t0, t1);
+      draw();
+      new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
+    }
+  }
+
+  function lineChart(host, d, series, t0, t1) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 240;
+    host.dataset.w = host.clientWidth;
+    const all = series.flatMap(s => s.pts);
+    if (!all.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato nel periodo' })); return; }
+    const narrow = W < 480;
+    const m = { l: 40, r: narrow ? 12 : 92, t: 10, b: 26 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b, span = Math.max(1, t1 - t0);
+    let lo = Math.min(...all.map(p => p.v)), hi = Math.max(...all.map(p => p.v));
+    let ticks;
+    if (d.ticks) { ticks = d.ticks; lo = d.min; hi = d.max; }
+    else { const pad = (hi - lo) * 0.15 || 1; ticks = niceTicks(lo - pad, hi + pad, 4); lo = ticks[0]; hi = ticks[ticks.length - 1]; }
+    const X = t => m.l + (t - t0) / span * iw, Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+
+    const s = svg('svg', { width: W, height: H, role: 'img', tabindex: 0, 'aria-label': `${d.title}: andamento nel periodo` });
+    for (const v of ticks) {
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), style: 'stroke:var(--grid);stroke-width:1' }));
+      const tx = svg('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', style: 'fill:var(--muted)' }); tx.textContent = d.tickFmt(v); s.append(tx);
+    }
+    s.append(svg('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, style: 'stroke:var(--axis);stroke-width:1' }));
+    const long = span > 2 * 86400e3;
+    for (let i = 0; i <= 4; i++) {
+      const t = t0 + span * i / 4, tx = svg('text', { x: m.l + iw * i / 4, y: H - 7, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle', style: 'fill:var(--muted)' });
+      tx.textContent = long ? fDM.format(t) : fHM.format(t); s.append(tx);
+    }
+
+    // interruzione della linea dove mancano i dati
+    const dts = series.flatMap(sr => sr.pts.slice(1).map((p, i) => p.t - sr.pts[i].t)).sort((a, b) => a - b);
+    const gap = Math.max(3 * 3600e3, (dts[Math.floor(dts.length / 2)] || 0) * 4);
+    const ends = [];
+    for (const sr of series) {
+      let seg = []; const segs = [];
+      for (const p of sr.pts) { if (seg.length && p.t - seg[seg.length - 1].t > gap) { segs.push(seg); seg = []; } seg.push(p); }
+      if (seg.length) segs.push(seg);
+      for (const sg of segs) {
+        if (sg.length > 1) s.append(svg('path', { d: sg.map((p, i) => (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(''), fill: 'none', style: `stroke:${sr.color};stroke-width:2`, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+        else s.append(svg('circle', { cx: X(sg[0].t), cy: Y(sg[0].v), r: 2.5, style: `fill:${sr.color}` }));
+      }
+      const lp = sr.pts[sr.pts.length - 1];
+      if (lp) { ends.push({ sr, lp }); s.append(svg('circle', { cx: X(lp.t), cy: Y(lp.v), r: 4, style: `fill:${sr.color};stroke:var(--surface);stroke-width:2` })); }
+    }
+    // etichette dirette: solo se non si toccano
+    const ys = ends.map(e => Y(e.lp.v)).sort((a, b) => a - b);
+    const clash = ys.some((y, i) => i && y - ys[i - 1] < 16);
+    if (!narrow && !clash) for (const e of ends) {
+      const tx = svg('text', { x: X(e.lp.t) + 10, y: Y(e.lp.v) + 4, style: 'fill:var(--ink2)' }); tx.textContent = `${e.sr.name} ${d.fmt(e.lp.v)}`; s.append(tx);
+    }
+
+    // hover
+    const times = [...new Set(all.map(p => p.t))].sort((a, b) => a - b);
+    const cross = svg('line', { y1: m.t, y2: m.t + ih, style: 'stroke:var(--ink2);stroke-width:1;opacity:.5', visibility: 'hidden' });
+    const dots = series.map(sr => svg('circle', { r: 4, style: `fill:${sr.color};stroke:var(--surface);stroke-width:2`, visibility: 'hidden' }));
+    s.append(cross, ...dots);
+    const over = svg('rect', { x: m.l, y: m.t, width: iw, height: ih, fill: 'transparent' }); s.append(over);
+    host.append(s);
+    const tip = el('div', { class: 'tip', hidden: '' }); host.append(tip);
+
+    let idx = times.length - 1;
+    const hide = () => { cross.setAttribute('visibility', 'hidden'); dots.forEach(c => c.setAttribute('visibility', 'hidden')); tip.hidden = true; };
+    const show = (i) => {
+      idx = Math.max(0, Math.min(times.length - 1, i)); const t = times[idx], x = X(t);
+      cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.setAttribute('visibility', 'visible');
+      tip.replaceChildren(el('div', { class: 't', text: fmtDT(t) }));
+      series.forEach((sr, k) => {
+        const p = sr.pts.find(q => q.t === t);
+        if (p) { dots[k].setAttribute('cx', x); dots[k].setAttribute('cy', Y(p.v)); dots[k].setAttribute('visibility', 'visible'); } else dots[k].setAttribute('visibility', 'hidden');
+        tip.append(el('div', { class: 'r', style: `--c:${sr.color}` }, [el('b', { text: p ? d.fmt(p.v) : '—' }), el('span', { text: sr.name })]));
+      });
+      tip.hidden = false;
+      const left = x + 14 + tip.offsetWidth > W ? x - 14 - tip.offsetWidth : x + 14;
+      tip.style.left = Math.max(0, left) + 'px'; tip.style.top = (m.t + 6) + 'px';
+    };
+    const nearest = (t) => { let a = 0, b = times.length - 1; while (b - a > 1) { const c = (a + b) >> 1; if (times[c] < t) a = c; else b = c; } return Math.abs(times[a] - t) <= Math.abs(times[b] - t) ? a : b; };
+    over.addEventListener('pointermove', e => { const r = s.getBoundingClientRect(); show(nearest(t0 + (e.clientX - r.left - m.l) / iw * span)); });
+    over.addEventListener('pointerleave', hide);
+    s.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); } else if (e.key === 'ArrowRight') { e.preventDefault(); show(idx + 1); } else if (e.key === 'Escape') hide();
+    });
+    s.addEventListener('focus', () => show(idx));
+    s.addEventListener('blur', hide);
+  }
+
+  /* ---------- riepilogo e tabella ---------- */
+  function renderSummary(inRange) {
+    const t = $('summary'); t.replaceChildren();
+    const cols = ['Termostato', 'Temp. min / media / max', 'Umidità media', 'Batteria (inizio → fine)', 'Calo medio', 'Stima alla soglia', 'Caldaia accesa (stima)'];
+    t.append(el('thead', {}, [el('tr', {}, cols.map(c => el('th', { text: c })))]));
+    const tb = el('tbody');
+    for (const n of S.model.names) {
+      const s = inRange.filter(r => r.name === n); if (!s.length) continue;
+      const tv = s.map(r => r.tamb).filter(v => v != null), rv = s.map(r => r.rh).filter(v => v != null);
+      const bp = s.map(r => ({ t: r.t, p: pct(r.mv) })).filter(x => x.p != null);
+      const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+      const spanD = (s[s.length - 1].t - s[0].t) / 86400e3;
+      let drop = '—', left = '—';
+      if (bp.length > 1 && spanD >= 1) {
+        const dd = (bp[0].p - bp[bp.length - 1].p) / spanD;
+        if (dd > 0.05) {
+          drop = nf1.format(dd) + ' %/giorno';
+          const last = bp[bp.length - 1].p;
+          left = last <= CFG.warn ? 'già raggiunta' : '~' + nf0.format((last - CFG.warn) / dd) + ' giorni';
+        } else drop = 'stabile';
+      }
+      const rl = s.filter(r => r.relay != null);
+      const heat = rl.length ? `${nf0.format(rl.filter(r => r.relay).length / rl.length * 100)} % del tempo (~${nf0.format(rl.filter(r => r.relay).length / rl.length * spanD * 24)} h)` : '—';
+      const row = el('tr');
+      row.append(el('td', {}, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)]));
+      [tv.length ? `${nf1.format(Math.min(...tv))} / ${nf1.format(avg(tv))} / ${nf1.format(Math.max(...tv))} °C` : '—',
+       rv.length ? nf0.format(avg(rv)) + ' %' : '—',
+       bp.length ? `${bp[0].p}% → ${bp[bp.length - 1].p}%` : '—', drop, left, heat].forEach(v => row.append(el('td', { class: 'num', text: v })));
+      tb.append(row);
+    }
+    t.append(tb);
+  }
+
+  function renderRaw(inRange) {
+    const t = $('rawtable'); t.replaceChildren();
+    const cols = ['Ora', 'Termostato', 'Temp.', 'Umidità', 'Batteria', 'mV', 'Caldaia', 'Stato'];
+    t.append(el('thead', {}, [el('tr', {}, cols.map(c => el('th', { text: c })))]));
+    const rows = inRange.slice().reverse(), MAX = 300, tb = el('tbody');
+    for (const r of rows.slice(0, MAX)) {
+      const p = pct(r.mv);
+      const tr = el('tr');
+      [fmtDT(r.t), r.name, r.tamb == null ? '—' : nf1.format(r.tamb) + ' °C', r.rh == null ? '—' : nf0.format(r.rh) + ' %',
+       p == null ? '—' : p + ' %', r.mv == null ? '—' : nf0.format(r.mv), r.relay == null ? '—' : (r.relay ? 'accesa' : 'spenta'), r.online || '—']
+        .forEach(v => tr.append(el('td', { class: 'num', text: v })));
+      tb.append(tr);
+    }
+    t.append(tb);
+    $('rawnote').textContent = rows.length > MAX ? `Mostrate le ultime ${MAX} righe su ${rows.length} del periodo.` : `${rows.length} righe nel periodo.`;
+  }
+
+  /* ---------- eventi ---------- */
+  $('range').addEventListener('click', e => {
+    const b = e.target.closest('button[data-r]'); if (!b) return;
+    S.days = +b.dataset.r;
+    for (const x of $('range').children) x.setAttribute('aria-pressed', x === b);
+    safe.set('tm_days', String(S.days));
+    if (S.model) render();
+  });
+  $('btn-connect').addEventListener('click', async () => {
+    const repo = $('repo').value.trim(), token = $('token').value.trim() || safe.get('tm_token') || '';
+    $('connect-err').textContent = '';
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) { $('connect-err').textContent = 'Inserisci repository nel formato proprietario/nome e il token.'; return; }
+    try {
+      useText(await fetchGitHub(repo, token), 'GitHub · ' + repo);
+      safe.set('tm_repo', repo); safe.set('tm_token', token); S.remote = { kind: 'gh', repo, token };
+      $('token').value = '';
+    } catch (e) { $('connect-err').textContent = e.message; }
+  });
+  $('file').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { useText(await f.text(), 'file locale · ' + f.name); S.remote = null; }
+    catch (err) { $('connect-err').textContent = err.message; }
+  });
+  $('btn-source').addEventListener('click', () => showConnect());
+  $('btn-theme').addEventListener('click', () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark'; safe.set('tm_theme', root.dataset.theme);
+  });
+
+  const th = safe.get('tm_theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th;
+  const dd = safe.get('tm_days');
+  if (dd !== null && ['0', '1', '7', '30'].includes(dd)) {
+    S.days = +dd; for (const x of $('range').children) x.setAttribute('aria-pressed', x.dataset.r === dd);
+  }
+  setInterval(refresh, 10 * 60 * 1000);
+  boot();
+})();
+</script>
+</body>
+</html>
