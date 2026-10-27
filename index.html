@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.12.0 bolletta in corso con previsione, soglia mensile e confronto con il normale a parità di freddo
   1.11.0 costo stimato con il prezzo medio delle fatture (pesato sugli Smc); grafico dei costi per fattura
   1.10.0 costo stimato con il prezzo del gas dell'ultima fattura (modificabile a mano)
   Regola: PATCH = correzioni, MINOR = nuove funzioni compatibili, MAJOR = cambi che rompono il formato dei dati.
@@ -150,6 +151,9 @@
   .bico.on { color: var(--series-2); } .bico.off { color: var(--muted); }
   h3 { font-size: 13px; font-weight: 600; margin: 0; }
   .card.inner { background: transparent; padding: 12px; }
+  .pbar { position: relative; height: 14px; border-radius: 7px; background: var(--grid); overflow: hidden; margin-top: 6px; }
+  .pbar i { position: absolute; top: 0; bottom: 0; left: 0; }
+  .pbar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); }
   .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-top: 10px; }
   .kpi .lbl { color: var(--ink2); font-size: 12px; }
   .kpi .val { font-size: 24px; font-weight: 600; line-height: 1.2; }
@@ -261,9 +265,9 @@
   /* ---------- configurazione (modificabile da config.json) ---------- */
   const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6,
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
-                     boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false,
+                     boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.11.0';
+  const VERSION = '1.12.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -793,7 +797,7 @@
   function loadCons() {
     try {
       const o = JSON.parse(safe.get('tm_cons') || '{}');
-      for (const k of ['boilerKw', 'gasEur', 'gasKwh', 'hddBase']) if (typeof o[k] === 'number' && isFinite(o[k])) CFG[k] = o[k];
+      for (const k of ['boilerKw', 'gasEur', 'gasKwh', 'hddBase', 'budget']) if (typeof o[k] === 'number' && isFinite(o[k])) CFG[k] = o[k];
       if (typeof o.gasManual === 'boolean') CFG.gasManual = o.gasManual;
     } catch { /* ignora */ }
   }
@@ -975,7 +979,7 @@
       }
       return el('label', { class: 'fld' }, kids);
     };
-    form.append(fld('boilerKw', 'Potenza caldaia (kW)', '0.5'), priceFld(), fld('gasKwh', 'kWh per Smc', '0.1'), fld('hddBase', 'Base gradi-giorno (°C)', '0.5'));
+    form.append(fld('boilerKw', 'Potenza caldaia (kW)', '0.5'), priceFld(), fld('gasKwh', 'kWh per Smc', '0.1'), fld('hddBase', 'Base gradi-giorno (°C)', '0.5'), fld('budget', 'Soglia mensile (€, 0 = nessuna)', '5'));
     set.append(form, el('div', { class: 'muted', style: 'margin-top:6px', text: (inv && !CFG.gasManual ? `Prezzo del gas: media pesata sugli Smc di ${inv.n} ${inv.n === 1 ? 'fattura' : 'fatture'} (${dayLabel(inv.d0)}/${inv.d0.slice(2, 4)}–${dayLabel(inv.d1)}/${inv.d1.slice(2, 4)}), ${nf2.format(inv.marg)} €/Smc` + (inv.n > 1 ? ` (da ${nf2.format(inv.min)} a ${nf2.format(inv.max)})` : '') + ` con accise e IVA, senza quota fissa. ` : '') + 'Costo = ore × kW ÷ kWh/Smc × €/Smc. Usa la potenza al focolare (targhetta). Salvate in questo browser; per renderle fisse usa le Variables del repository (BOILER_KW, GAS_EUR_SMC…) per il report Telegram.' }));
     host.append(set);
 
@@ -1013,6 +1017,7 @@
     t2.append(b2);
     tw.append(el('div', { class: 'scroll', style: 'margin-top:8px' }, [t1, t2])); host.append(tw);
 
+    renderBill(host, all);
     renderSeason(host, all);
     renderFatture(host, all);
 
@@ -1320,6 +1325,112 @@
     const t = await fetchFattureText();
     S.fatt = t ? parseFatture(t) : null;
     if (S.model) renderCons();
+  }
+
+  /* ---------- bolletta in corso e consumi anomali (stessa logica di "intelliclima_monitor.py bolletta") ---------- */
+  const IVA_FISSA = 1.22, MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  const nowMs = () => (typeof window.__NOW === 'number' ? window.__NOW : Date.now());
+  const addDays = (ds, n) => dayStr(new Date(utcDay(ds).getTime() + n * 864e5));
+  const addMonths = (ds, n) => { const [y, m] = ds.split('-').map(Number), t = y * 12 + m - 1 + n; return `${Math.floor(t / 12)}-${p2(t % 12 + 1)}-01`; };
+  const monthLast = (ds) => addDays(addMonths(ds, 1), -1);
+  function romeMidnight(ds) {                       // istante (ms) in cui inizia il giorno italiano ds
+    let t = utcDay(ds).getTime() - 3 * HOUR;
+    for (let i = 0; i < 8; i++, t += HOUR) { const b = romeBucket(t); if (b.day === ds && b.hour === 0) return t; }
+    return utcDay(ds).getTime() - HOUR;
+  }
+  function billPeriods(fatt, today) {
+    if (!fatt.length) return [];
+    const last = fatt[fatt.length - 1], two = last.giorni > 45, out = [];
+    let start = addDays(last.d1, 1);
+    while (start <= today && out.length < 8) { const end = monthLast(two ? addMonths(start, 1) : start); out.push([start, end]); start = addDays(end, 1); }
+    return out;
+  }
+  function costContext(all) {
+    const fatt = S.fatt || [], an = fatt.length ? analyzeFatture(all, fatt) : { baseline: null, calib: null };
+    let kw = CFG.boilerKw > 0 ? CFG.boilerKw : (an.calib ? an.calib.kw : null);
+    const withF = fatt.filter(f => f.fissa && f.giorni), lf = withF[withF.length - 1];
+    return { fatt, all, days: aggregate(all).days, tm: toutByDay(all), kw, kwh: CFG.gasKwh, price: gasPrice(), baseline: an.baseline,
+             fissaDay: lf ? lf.fissa / lf.giorni * IVA_FISSA : 0 };
+  }
+  function estimatePeriod(ctx, d0, d1, now) {
+    const start = romeMidnight(d0), end = romeMidnight(addDays(d1, 1)), nowTs = Math.min(now, end), elH = (nowTs - start) / HOUR;
+    if (elH < 6 || !(ctx.price > 0)) return null;
+    let on = 0, obs = 0;
+    for (let d = d0; d <= d1; d = addDays(d, 1)) { const v = ctx.days.get(d); if (v) { on += v[0]; obs += v[1]; } }
+    const cov = obs / elH, res = { d0, d1, elDays: elH / 24, totDays: (end - start) / 864e5, cov, on, done: now >= end, insufficient: cov < 0.3 };
+    if (res.insufficient) return res;
+    const onEst = on / cov, remDays = Math.max(0, (end - nowTs) / 864e5);
+    let rate = null;
+    if (remDays > 0) { rate = perDay(windowStats(ctx.all, now - 14 * 864e5, now)); if (rate == null) rate = onEst / (elH / 24); }
+    const parts = (days, hours) => [ctx.fissaDay * days, ctx.baseline != null ? ctx.baseline * days * ctx.price : 0, ctx.kw ? hours * ctx.kw / ctx.kwh * ctx.price : null];
+    const acc = parts(elH / 24, onEst), rem = parts(remDays, (rate || 0) * remDays), tot = a => a[0] + a[1] + (a[2] || 0);
+    return { ...res, acc, rem, heatOk: acc[2] != null, accTotal: tot(acc), fcTotal: tot(acc) + tot(rem), rate, remDays };
+  }
+  function fitHoursVsHdd(pts) {
+    const n = pts.length, mx = pts.reduce((a, p) => a + p[0], 0) / n, my = pts.reduce((a, p) => a + p[1], 0) / n;
+    const sxx = pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+    if (sxx > 1e-9) { const k = pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / sxx; if (k > 0) return [my - k * mx, k]; }
+    const sx = pts.reduce((a, p) => a + p[0] * p[0], 0);
+    return [0, sx > 0 ? pts.reduce((a, p) => a + p[0] * p[1], 0) / sx : 0];
+  }
+  function weeklyAnomaly(ctx, now) {
+    const base = CFG.hddBase, d1 = addDays(romeBucket(now).day, -1), d0 = addDays(d1, -6);
+    const pts = (a, b) => { const out = []; for (let d = a; d <= b; d = addDays(d, 1)) { const v = ctx.days.get(d); if (v && v[1] >= 20 && ctx.tm.has(d)) out.push([Math.max(0, base - ctx.tm.get(d)), v[0]]); } return out; };
+    const cur = pts(d0, d1), ref = pts(addDays(d0, -56), addDays(d0, -1)).filter(p => p[0] > 0);
+    const hddCur = cur.reduce((a, p) => a + p[0], 0);
+    if (cur.length < 5 || hddCur < 10 || ref.length < 14 || ref.reduce((a, p) => a + p[0], 0) < 40) return null;
+    const [a, k] = fitHoursVsHdd(ref), exp = cur.reduce((x, p) => x + Math.max(0, a + k * p[0]), 0), on = cur.reduce((x, p) => x + p[1], 0);
+    return exp > 0 ? { d0, d1, on, exp, dev: on / exp - 1 } : null;
+  }
+  function renderBill(host, all) {
+    const ctx = costContext(all), now = nowMs();
+    if (!ctx.fatt.length || !(ctx.price > 0)) return;
+    const today = romeBucket(now).day, ests = [];
+    for (const [d0, d1] of billPeriods(ctx.fatt, today).slice(-2)) { const e = estimatePeriod(ctx, d0, d1, now); if (e) ests.push(e); }
+    const an = weeklyAnomaly(ctx, now), bud = CFG.budget > 0 ? CFG.budget : 0;
+    let me = null;
+    if (bud) { const m0 = today.slice(0, 8) + '01'; me = estimatePeriod(ctx, m0, monthLast(m0), now); if (me && (me.insufficient || !me.heatOk)) me = null; }
+    if (!ests.length && !an) return;
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' });
+    const cur = ests.find(e => !e.done), pend = ests.find(e => e.done);
+    const dm = (d) => dayLabel(d);
+    card.append(el('div', { class: 'ch-head' }, [el('h3', { text: 'Bolletta in corso' }),
+      el('span', { class: 'muted', text: cur ? `${dm(cur.d0)}–${dm(cur.d1)} · giorno ${Math.floor(cur.elDays) + 1} di ${Math.round(cur.totDays)}` : 'stima dai consumi misurati' })]));
+    const bar = (acc, fc, mark, over) => {
+      const top = Math.max(fc, mark || 0) * 1.08 || 1, col = over ? 'var(--warn)' : 'var(--series-2)';
+      const w = el('div', { class: 'pbar', role: 'img', 'aria-label': `Speso ${nf0.format(acc)} euro, previsione ${nf0.format(fc)} euro` + (mark ? `, soglia ${nf0.format(mark)} euro` : '') }, [
+        el('i', { style: `width:${fc / top * 100}%;background:${col};opacity:.35` }), el('i', { style: `width:${acc / top * 100}%;background:${col}` })]);
+      if (mark) w.append(el('b', { style: `left:${mark / top * 100}%`, title: `Soglia ${eur(mark)}` }));
+      return w;
+    };
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    if (cur && !cur.insufficient) {
+      const a = cur.acc;
+      kpi.append(tile('Speso finora', eur(cur.accTotal), `quota fissa ${nf1.format(a[0])} · base ${nf1.format(a[1])}` + (cur.heatOk ? ` · riscaldamento ${nf1.format(a[2])}` : '')),
+                 tile('Previsione a fine periodo', eur(cur.fcTotal), 'al ritmo delle ultime due settimane'));
+      card.append(kpi, bar(cur.accTotal, cur.fcTotal, 0, false));
+      if (!cur.heatOk) card.append(el('div', { class: 'muted', style: 'margin-top:6px', text: 'Riscaldamento non stimabile: imposta la potenza della caldaia in “Impostazioni costo” (o servono fatture invernali coperte dai dati).' }));
+      if (cur.cov < 0.9) card.append(el('div', { class: 'muted', style: 'margin-top:6px', text: `Rilevazioni disponibili per il ${nf0.format(cur.cov * 100)}% del periodo: il resto è ricavato per proporzione.` }));
+    } else if (cur) {
+      card.append(el('div', { class: 'muted', style: 'margin-top:8px', text: `Dati insufficienti per il periodo in corso (${nf0.format(cur.cov * 100)}% coperto).` }));
+    }
+    if (pend && !pend.insufficient) card.append(el('div', { class: 'muted', style: 'margin-top:10px', text: `Periodo ${dm(pend.d0)}–${dm(pend.d1)} concluso, fattura in arrivo: stima circa ${eur(pend.accTotal)}.` }));
+    if (me) {
+      const nome = MESI[+today.slice(5, 7) - 1], over = me.fcTotal >= bud;
+      card.append(el('div', { style: 'margin-top:12px' }, [
+        el('div', { class: 'row', style: 'justify-content:space-between' }, [el('b', { text: `${nome.charAt(0).toUpperCase() + nome.slice(1)} contro la soglia` }),
+          el('span', { class: 'muted', text: `${eur(me.accTotal)} speso · previsione ${eur(me.fcTotal)} · soglia ${eur(bud)}` })]),
+        bar(me.accTotal, me.fcTotal, bud, over)]));
+      if (over) card.append(el('div', { style: 'margin-top:6px;font-weight:600', text: me.accTotal >= bud ? 'Soglia mensile superata.' : 'A questo ritmo supererai la soglia mensile.' }));
+    }
+    if (an) {
+      const hot = an.dev * 100 >= 40 && an.on - an.exp >= 6;
+      card.append(el('div', { style: 'margin-top:12px' + (hot ? ';font-weight:600' : '') },
+        [(hot ? '⚠ ' : '') + `Rispetto al normale a parità di freddo: ${an.dev >= 0 ? '+' : '−'}${nf0.format(Math.abs(an.dev) * 100)}% (${nf0.format(an.on)} h contro ~${nf0.format(an.exp)} attese, 7 giorni fino al ${dm(an.d1)})`]));
+    }
+    card.append(el('div', { class: 'muted', style: 'margin-top:8px', text: `Stima: quota fissa con IVA + consumo di base + ore di caldaia × ${ctx.kw ? nf1.format(ctx.kw) : '?'} kW ÷ ${nf1.format(ctx.kwh)} kWh/Smc × ${nf2.format(ctx.price)} €/Smc, a meteo costante. Non sostituisce la fattura.` }));
+    host.append(card);
   }
 
   function renderFatture(host, all) {
