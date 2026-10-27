@@ -27,6 +27,7 @@
   1.6.0  banner dati fermi configurabile (dataStaleH, default 3 h) e piu' visibile; il monitoraggio avvisa su Telegram di buchi e guasti del cloud
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
+  1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
   Regola: PATCH = correzioni, MINOR = nuove funzioni compatibili, MAJOR = cambi che rompono il formato dei dati.
 -->
 <style>
@@ -194,6 +195,8 @@
       <button class="btn primary" id="btn-connect" type="button">Collega</button>
       <label class="btn" for="file" style="margin:0;font-weight:400">Apri un CSV locale…</label>
       <input type="file" id="file" accept=".csv,text/csv" hidden>
+      <label class="btn" for="file-fatt" style="margin:0;font-weight:400">Apri fatture.csv (facoltativo)…</label>
+      <input type="file" id="file-fatt" accept=".csv,text/csv" hidden>
     </div>
     <div class="err" id="connect-err" role="alert"></div>
   </section>
@@ -258,7 +261,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.8.0';
+  const VERSION = '1.9.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -336,7 +339,7 @@
   }
 
   /* ---------- stato ---------- */
-  const S = { model: null, days: 7, source: '', remote: null };
+  const S = { model: null, days: 7, source: '', remote: null, fatt: null, raw: null };
 
   /* ---------- caricamento dati ---------- */
   async function loadConfig() {
@@ -371,10 +374,10 @@
   }
   async function boot() {
     await loadConfig(); loadCons();
-    try { useText(await fetchRelative(), 'data.csv'); S.remote = { kind: 'rel' }; return; } catch { /* prova GitHub */ }
+    try { useText(await fetchRelative(), 'data.csv'); S.remote = { kind: 'rel' }; loadFatture(); return; } catch { /* prova GitHub */ }
     const repo = safe.get('tm_repo'), token = safe.get('tm_token');
     if (repo && token) {
-      try { useText(await fetchGitHub(repo, token), 'GitHub · ' + repo); S.remote = { kind: 'gh', repo, token }; return; }
+      try { useText(await fetchGitHub(repo, token), 'GitHub · ' + repo); S.remote = { kind: 'gh', repo, token }; loadFatture(); return; }
       catch (e) { showConnect(e.message); return; }
     }
     showConnect();
@@ -390,7 +393,7 @@
     $('main').classList.add('loading');
     try {
       const text = S.remote.kind === 'rel' ? await fetchRelative() : await fetchGitHub(S.remote.repo, S.remote.token);
-      useText(text, S.source);
+      useText(text, S.source); loadFatture();
     } catch { /* tiene l'ultimo render */ }
     $('main').classList.remove('loading');
   }
@@ -944,6 +947,7 @@
     tw.append(el('div', { class: 'scroll', style: 'margin-top:8px' }, [t1, t2])); host.append(tw);
 
     renderSeason(host, all);
+    renderFatture(host, all);
 
     // mappa oraria
     const sel = el('select', { 'aria-label': 'Sorgente mappa oraria' }, [el('option', { value: '', text: 'Caldaia (tutte le zone)' }), ...names.map(n => el('option', { value: n, text: n }))]);
@@ -1016,7 +1020,7 @@
     return { on, obs, hdd, toutMean: n ? sum / n : null, toutDays: td };
   }
 
-  function groupBar(host, items, hasPrev, isEur) {
+  function groupBar(host, items, hasPrev, isEur, labels = { a: 'stagione attuale', b: 'anno prima' }, unit = ' h') {
     host.replaceChildren();
     const W = Math.max(260, Math.floor(host.clientWidth)), H = 230; host.dataset.w = host.clientWidth;
     if (!items.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
@@ -1024,17 +1028,17 @@
     const vals = items.flatMap(x => [x.a, x.b]).filter(v => v != null);
     const ticks = niceTicks(0, Math.max(1, ...vals), 4), top = ticks[ticks.length - 1];
     const dec = ticks.some(v => Math.abs(v - Math.round(v)) > 1e-9);
-    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': isEur ? 'Costo stimato per periodo' : 'Ore di caldaia accesa per periodo' });
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': labels.aria || (isEur ? 'Costo stimato per periodo' : 'Ore di caldaia accesa per periodo') });
     for (const v of ticks) {
       const y = m.t + ih - v / top * ih;
       s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
       const t = svg('text', { x: m.l - 6, y: y + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = (dec ? nf1 : nf0).format(v); s.append(t);
     }
     const gw = iw / items.length, bw = Math.max(2, Math.min(26, gw * (hasPrev ? 0.36 : 0.7))), every = Math.ceil(items.length / Math.max(1, Math.floor(iw / 40)));
-    const fv = (v) => isEur ? eur(v) : nf1.format(v) + ' h';
+    const fv = (v) => isEur ? eur(v) : nf1.format(v) + unit;
     items.forEach((it, k) => {
       const cx = m.l + gw * (k + 0.5);
-      const bars = hasPrev ? [['b', cx - bw - 1, 'var(--series-1)', it.partialB, 'anno prima'], ['a', cx + 1, 'var(--series-2)', it.partialA, 'stagione attuale']] : [['a', cx - bw / 2, 'var(--series-2)', it.partialA, 'stagione attuale']];
+      const bars = hasPrev ? [['b', cx - bw - 1, 'var(--series-1)', it.partialB, labels.b], ['a', cx + 1, 'var(--series-2)', it.partialA, labels.a]] : [['a', cx - bw / 2, 'var(--series-2)', it.partialA, labels.a]];
       for (const [f, x, color, partial, lbl] of bars) {
         const v = it[f]; if (v == null) continue;
         const h = v / top * ih;
@@ -1183,6 +1187,135 @@
   }
   function closeReport() { $('report').hidden = true; document.documentElement.classList.remove('report-open'); }
 
+  /* ---------- fatture del gas ---------- */
+  // Stessa logica di "intelliclima_monitor.py fatture": consumo di base dalle fatture estive, Smc di riscaldamento
+  // per ora di caldaia, confronto con la stima del modello e calibrazione suggerita.
+  const BASE_MAX_H_DAY = 0.25, MIN_COVERAGE = 0.9;
+  function parseFatture(text) {
+    const out = [];
+    for (const r of parseCSV(text)) {
+      const d0 = (r.periodo_dal || '').trim(), d1 = (r.periodo_al || '').trim(), smc = num(r.smc);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d0) || !/^\d{4}-\d{2}-\d{2}$/.test(d1) || smc == null || d1 < d0) continue;
+      out.push({ d0, d1, giorni: Math.round((utcDay(d1) - utcDay(d0)) / 864e5) + 1, smc, eur: num(r.totale_eur), marg: num(r.prezzo_marginale_eur_smc),
+                 fissa: num(r.quota_fissa_eur), tipo: (r.tipo_lettura || 'reale').trim().toLowerCase() });
+    }
+    return out.sort((a, b) => a.d0 < b.d0 ? -1 : 1);
+  }
+  function periodStats(days, tm, d0, d1) {
+    let on = 0, obs = 0, hdd = 0, ts = 0, n = 0;
+    for (let dt = utcDay(d0), d = d0; d <= d1; dt = new Date(dt.getTime() + 864e5), d = dayStr(dt)) {
+      const v = days.get(d); if (v) { on += v[0]; obs += v[1]; }
+      if (tm.has(d)) { hdd += Math.max(0, CFG.hddBase - tm.get(d)) * Math.min(1, (v ? v[1] : 0) / 24); ts += tm.get(d); n++; }
+    }
+    return { on, obs, hdd, tout: n ? ts / n : null };
+  }
+  function analyzeFatture(all, fatt) {
+    const { days } = aggregate(all), tm = toutByDay(all), kw = CFG.boilerKw, kwh = CFG.gasKwh;
+    const items = fatt.map(f => {
+      const st = periodStats(days, tm, f.d0, f.d1), cov = st.obs / (f.giorni * 24);
+      const summer = f.d0.slice(0, 4) === f.d1.slice(0, 4) && f.d0.slice(5) >= '06-01' && f.d1.slice(5) <= '09-15';
+      const isBase = summer && f.tipo === 'reale' && !(cov >= MIN_COVERAGE && st.on / f.giorni > BASE_MAX_H_DAY);
+      return { ...f, ...st, cov, isBase };
+    });
+    const bs = items.filter(i => i.isBase);
+    const baseline = bs.length ? bs.reduce((a, i) => a + i.smc, 0) / bs.reduce((a, i) => a + i.giorni, 0) : null;
+    for (const i of items) {
+      i.heat = i.isBase || baseline == null ? null : Math.max(0, i.smc - baseline * i.giorni);
+      i.comparable = !i.isBase && i.tipo === 'reale' && i.cov >= MIN_COVERAGE && i.on >= 5 && i.heat != null;
+      i.smcH = i.comparable ? i.heat / i.on : null;
+      i.model = (kw > 0 && baseline != null && !i.isBase && i.cov >= MIN_COVERAGE) ? baseline * i.giorni + i.on * kw / kwh : null;
+      i.err = i.model != null && i.smc > 0 ? i.model / i.smc - 1 : null;
+    }
+    const comp = items.filter(i => i.comparable);
+    let calib = null;
+    if (comp.length) {
+      const smcH = comp.reduce((a, i) => a + i.heat, 0) / comp.reduce((a, i) => a + i.on, 0);
+      const marg = [...items].reverse().find(i => i.marg)?.marg ?? null;
+      calib = { smcH, kw: smcH * kwh, price: marg, n: comp.length };
+    }
+    return { items, baseline, calib };
+  }
+
+  async function fetchFattureText() {
+    try {
+      if (S.remote && S.remote.kind === 'gh') {
+        const r = await fetch(`https://api.github.com/repos/${S.remote.repo}/contents/data/fatture.csv`, { headers: { Accept: 'application/vnd.github.raw+json', Authorization: `Bearer ${S.remote.token}` } });
+        return r.ok ? r.text() : null;
+      }
+      if (S.remote && S.remote.kind === 'rel') {
+        const r = await fetch('fatture.csv?_=' + Date.now(), { cache: 'no-store' });
+        return r.ok ? r.text() : null;
+      }
+    } catch { /* le fatture sono facoltative */ }
+    return null;
+  }
+  async function loadFatture() {
+    const t = await fetchFattureText();
+    S.fatt = t ? parseFatture(t) : null;
+    if (S.model) renderCons();
+  }
+
+  function renderFatture(host, all) {
+    if (!S.fatt || !S.fatt.length) return;
+    const an = analyzeFatture(all, S.fatt), c = an.calib, items = an.items;
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
+      el('div', { class: 'ch-head' }, [el('h3', { text: 'Fatture gas' }), el('span', { class: 'muted', text: 'consumi reali contro stime del modello' })])]);
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    const marg = [...items].reverse().find(i => i.marg)?.marg, withEur = items.filter(i => i.eur != null);
+    const heatEur = withEur.filter(i => !i.isBase), pool = heatEur.length ? heatEur : withEur;
+    const totE = pool.reduce((a, i) => a + i.eur, 0), totS = pool.reduce((a, i) => a + i.smc, 0);
+    kpi.append(
+      tile('Consumo di base (acqua calda)', an.baseline != null ? `${nf2.format(an.baseline)} Smc/giorno` : '—',
+        an.baseline != null ? `${nf1.format(an.baseline * 30.4)} Smc/mese` + (marg ? `, circa ${eur(an.baseline * 30.4 * marg)}/mese` : '') : 'serve una fattura estiva'),
+      tile('Prezzo di ogni Smc in più', marg ? eur(marg) : '—', 'accise e IVA incluse, ultima fattura'),
+      tile('Costo medio reale', totS ? `${eur(totE / totS)}/Smc` : '—', heatEur.length ? 'periodi di riscaldamento, quota fissa inclusa' : 'solo estate: pesa molto la quota fissa'),
+      tile('Smc per ora di caldaia', c ? nf2.format(c.smcH) : '—', c ? `BOILER_KW suggerito ${nf1.format(c.kw)}${CFG.boilerKw > 0 ? ` (ora ${nf1.format(CFG.boilerKw)})` : ''}` : 'serve una fattura invernale coperta dalle rilevazioni'));
+    card.append(kpi);
+
+    // grafico: Smc reali contro stima del modello, una coppia di barre per fattura
+    const rows = items.map(i => ({ label: dayLabel(i.d0), long: `${dayLabel(i.d0)}–${dayLabel(i.d1)}/${i.d1.slice(2, 4)}`, a: i.smc, b: i.model,
+                                   partialA: !i.isBase && i.cov < MIN_COVERAGE, partialB: !i.isBase && i.cov < MIN_COVERAGE }));
+    const hasModel = rows.some(r => r.b != null);
+    const chart = el('div', { class: 'chart', style: 'margin-top:12px' });
+    card.append(el('div', { class: 'legend', style: 'margin-top:12px' }, [el('span', { style: '--c:var(--series-2)', text: 'Smc fatturati' }), hasModel ? el('span', { style: '--c:var(--series-1)', text: 'Stima del modello' }) : null]), chart);
+    const draw = () => groupBar(chart, rows, hasModel, false, { a: 'fatturati', b: 'stima del modello', aria: 'Smc fatturati e stimati per fattura' }, ' Smc');
+    draw(); new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
+    if (!hasModel) card.append(el('div', { class: 'muted', style: 'margin-top:6px', text: 'Per vedere la stima del modello imposta la potenza della caldaia in “Impostazioni costo” e servono fatture con rilevazioni sul periodo.' }));
+
+    // calibrazione
+    if (c) {
+      const aff = c.n === 1 ? 'indicativa (una sola fattura)' : c.n < 4 ? 'discreta' : 'buona';
+      const box = el('div', { class: 'row', style: 'margin-top:12px;align-items:center' }, [
+        el('span', { text: `Calibrazione suggerita (${c.n} ${c.n === 1 ? 'fattura confrontabile' : 'fatture confrontabili'}, affidabilità ${aff}): ` }),
+        el('b', { text: `BOILER_KW ${nf1.format(c.kw)}` + (c.price ? ` · GAS_EUR_SMC ${nf2.format(c.price)}` : '') })]);
+      const b = el('button', { class: 'btn', type: 'button', text: 'Applica alla dashboard' });
+      b.addEventListener('click', () => {
+        CFG.boilerKw = Math.round(c.kw * 10) / 10; if (c.price) CFG.gasEur = Math.round(c.price * 100) / 100;
+        let o = {}; try { o = JSON.parse(safe.get('tm_cons') || '{}'); } catch { /* ignora */ }
+        o.boilerKw = CFG.boilerKw; if (c.price) o.gasEur = CFG.gasEur; safe.set('tm_cons', JSON.stringify(o)); renderCons();
+      });
+      box.append(b); card.append(box,
+        el('div', { class: 'muted', style: 'margin-top:4px', text: 'Per usare gli stessi valori nel report Telegram imposta BOILER_KW e GAS_EUR_SMC nelle Variables del repository. Il costo stimato esclude la quota fissa.' }));
+    }
+
+    // tabella
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Giorni', 'Smc', 'Totale', '€/Smc medio', 'Riscaldamento (Smc)', 'Ore caldaia', 'Smc/ora', 'Stima modello', 'Scarto', 'Note'].map(c2 => el('th', { text: c2 })))]));
+    const tb = el('tbody');
+    for (const i of items.slice().reverse()) {
+      const note = i.tipo !== 'reale' ? 'lettura stimata: esclusa' : i.isBase ? 'estate: consumo di base' : i.cov < MIN_COVERAGE ? `rilevazioni al ${nf0.format(i.cov * 100)}%: non confrontabile` : '';
+      const tr = el('tr');
+      [`${dayLabel(i.d0)}/${i.d0.slice(2, 4)} – ${dayLabel(i.d1)}/${i.d1.slice(2, 4)}`, String(i.giorni), nf1.format(i.smc), i.eur != null ? eur(i.eur) : '—', i.eur != null ? eur(i.eur / i.smc) : '—',
+       i.heat != null ? nf1.format(i.heat) : '—', i.cov >= MIN_COVERAGE || i.on > 0 ? nf1.format(i.on) : '—', i.smcH != null ? nf2.format(i.smcH) : '—',
+       i.model != null ? nf1.format(i.model) : '—', i.err != null ? `${i.err >= 0 ? '+' : '−'}${nf0.format(Math.abs(i.err) * 100)}%` : '—', note]
+        .forEach((v, k) => tr.append(el('td', { class: k && k < 10 ? 'num' : '', text: v }))); tb.append(tr);
+    }
+    t.append(tb);
+    card.append(el('details', {}, [el('summary', { text: 'Dettaglio fatture' }), el('div', { class: 'scroll' }, [t]),
+      el('div', { class: 'muted', style: 'margin-top:6px', text: 'Smc di riscaldamento = Smc fatturati − consumo di base × giorni. Solo fatture con lettura reale e rilevazioni su almeno il 90% del periodo entrano nella calibrazione.' })]));
+    host.append(card);
+  }
+
   /* ---------- eventi ---------- */
   $('range').addEventListener('click', e => {
     const b = e.target.closest('button[data-r]'); if (!b) return;
@@ -1197,7 +1330,7 @@
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) { $('connect-err').textContent = 'Inserisci repository nel formato proprietario/nome e il token.'; return; }
     try {
       useText(await fetchGitHub(repo, token), 'GitHub · ' + repo);
-      safe.set('tm_repo', repo); safe.set('tm_token', token); S.remote = { kind: 'gh', repo, token };
+      safe.set('tm_repo', repo); safe.set('tm_token', token); S.remote = { kind: 'gh', repo, token }; loadFatture();
       $('token').value = '';
     } catch (e) { $('connect-err').textContent = e.message; }
   });
@@ -1219,6 +1352,10 @@
   $('report-print').addEventListener('click', () => window.print());
   $('report-close').addEventListener('click', closeReport);
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('report').hidden) closeReport(); });
+  $('file-fatt').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { S.fatt = parseFatture(await f.text()); if (S.model) renderCons(); } catch (err) { $('connect-err').textContent = err.message; }
+  });
   $('btn-source').addEventListener('click', () => showConnect());
   $('btn-theme').addEventListener('click', () => {
     const root = document.documentElement;
