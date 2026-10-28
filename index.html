@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.13.0 stato attuale: data e ora dell'ultima accensione e dell'ultimo spegnimento di ogni termostato
   1.12.0 bolletta in corso con previsione, soglia mensile e confronto con il normale a parità di freddo
   1.11.0 costo stimato con il prezzo medio delle fatture (pesato sugli Smc); grafico dei costi per fattura
   1.10.0 costo stimato con il prezzo del gas dell'ultima fattura (modificabile a mano)
@@ -104,6 +105,10 @@
   .meter { height: 8px; border-radius: 4px; position: relative; overflow: hidden; }
   .meter::before { content: ""; position: absolute; inset: 0; background: var(--fill); opacity: .18; }
   .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fill); border-radius: 4px; }
+  .sw { margin-top: 10px; font-size: 13px; display: grid; gap: 2px; }
+  .sw .r { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .sw .r b { white-space: nowrap; }
+  .sw .muted { font-size: 12px; }
   .foot { margin-top: 12px; color: var(--muted); font-size: 12px; }
 
   .filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0 12px; }
@@ -267,7 +272,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.12.0';
+  const VERSION = '1.13.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -481,6 +486,23 @@
     if (!box.children.length) add('good', '✓', 'Tutto regolare:', 'batterie, connessione e rilevazioni sono nella norma.');
   }
 
+  // ultima accensione/spegnimento: il primo campione con il relè cambiato rispetto al precedente.
+  // L'ora e' quella del controllo che l'ha visto; il cambio e' avvenuto tra il controllo prima e questo.
+  function switchTimes(name) {
+    let lastOn = null, lastOff = null, prev = null;
+    for (const r of seriesOf(name)) {
+      if (r.relay == null) continue;
+      if (prev && prev.relay !== r.relay) { const ev = { t: r.t, from: prev.t }; if (r.relay === 1) lastOn = ev; else lastOff = ev; }
+      prev = r;
+    }
+    return { lastOn, lastOff };
+  }
+  function durTxt(ms) {
+    const m = Math.max(0, Math.round(ms / 60000));
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60), mm = m % 60;
+    return h < 48 ? (mm ? `${h} h ${mm} min` : `${h} h`) : `${Math.round(h / 24)} giorni`;
+  }
   function renderNow() {
     const host = $('now'); host.replaceChildren();
     for (const n of S.model.names) {
@@ -506,6 +528,13 @@
         metric('Umidità', r.rh == null ? '—' : nf0.format(r.rh), r.rh == null ? '' : '%'),
         metric('Caldaia', r.relay == null ? '—' : (r.relay ? 'Accesa' : 'Spenta'), '', r.relay == null ? null : flame(!!r.relay)),
       ]));
+      const sw = switchTimes(n), isOn = r.relay === 1;
+      if (sw.lastOn || sw.lastOff || r.relay != null) {
+        const row = (lbl, ev, running) => el('div', { class: 'r', title: ev ? `Rilevato al controllo delle ${fHM.format(ev.t)}; il controllo precedente era alle ${fHM.format(ev.from)}` : '' },
+          [el('span', {}, [lbl, running && ev ? el('span', { class: 'muted', text: ` · da ${durTxt(Date.now() - ev.t)}` }) : null]), el('b', { text: ev ? fmtDT(ev.t) : 'nessuno nei dati' })]);
+        card.append(el('div', { class: 'sw' }, [row('Ultima accensione', sw.lastOn, isOn), row('Ultimo spegnimento', sw.lastOff, r.relay === 0),
+          el('div', { class: 'muted', text: 'Orari rilevati ai controlli (di norma ogni ora): il cambio è avvenuto poco prima.' })]));
+      }
       card.append(el('div', { class: 'bat-row' }, [
         el('span', {}, [el('b', { text: 'Batteria ' + (p == null ? '—' : p + '%') }), el('span', { class: 'muted', text: r.mv == null ? '' : ` (${nf0.format(r.mv)} mV)` })]),
         el('span', { class: 'chip' }, [el('span', { class: 'ico ' + st.cls, text: st.ico }), st.label]),
