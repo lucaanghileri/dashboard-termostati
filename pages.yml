@@ -52,15 +52,15 @@ jobs:
               w = csv.DictWriter(o, fieldnames=keep, extrasaction="ignore")
               w.writeheader()
               w.writerows(csv.DictReader(f))
-          # fatture del gas: solo i numeri (la colonna "note" puo' contenere dettagli personali)
+          # fatture del gas e della corrente: solo i numeri (la colonna "note" puo' contenere dettagli personali)
           # NON pubblicate di default (il sito Pages e' pubblico): imposta la Variable PUBLISH_FATTURE=true per includerle
-          if os.path.exists("data/fatture.csv") and os.environ.get("PUBLISH_FATTURE", "").strip().lower() in ("1", "true", "yes"):
-              with open("data/fatture.csv", newline="", encoding="utf-8") as f, \
-                   open("_site/fatture.csv", "w", newline="", encoding="utf-8") as o:
-                  rd = csv.DictReader(f)
-                  w = csv.DictWriter(o, fieldnames=[c for c in rd.fieldnames if c != "note"], extrasaction="ignore")
-                  w.writeheader()
-                  w.writerows(rd)
+          for src, dst in (("data/fatture.csv", "_site/fatture.csv"), ("data/fatture_corrente.csv", "_site/fatture_corrente.csv")):
+              if os.path.exists(src) and os.environ.get("PUBLISH_FATTURE", "").strip().lower() in ("1", "true", "yes"):
+                  with open(src, newline="", encoding="utf-8") as f, open(dst, "w", newline="", encoding="utf-8") as o:
+                      rd = csv.DictReader(f)
+                      w = csv.DictWriter(o, fieldnames=[c for c in rd.fieldnames if c != "note"], extrasaction="ignore")
+                      w.writeheader()
+                      w.writerows(rd)
           cfg = {}
           for env, key in (("BATTERY_FULL_MV", "full"), ("BATTERY_EMPTY_MV", "empty"),
                            ("BATTERY_WARN_PCT", "warn"), ("STALE_HOURS", "staleH"),
