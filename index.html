@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.15.0 card "Corrente elettrica" nella home, con la sua dashboard (per ora vuota) su #corrente
   1.14.0 pagina iniziale "Casa" con le card dei moduli (per ora Termostati); la dashboard dei termostati si apre dalla card (#termostati)
   1.13.3 card del termostato: solo l'icona fiamma/cerchio per lo stato della caldaia, senza testo accesa/spenta
   1.13.2 durata dell'ultimo ciclo (dall'ultima accensione all'ultimo spegnimento) al posto del totale assoluto
@@ -90,6 +91,9 @@
   .hcard { display: block; color: inherit; text-decoration: none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; min-width: 0; transition: border-color .15s, transform .15s; }
   .hcard:hover { border-color: var(--axis); }
   .hcard:active { transform: scale(.99); }
+  .empty { text-align: center; padding: 40px 20px; }
+  .empty .big { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; margin: 0 auto 14px; background: color-mix(in srgb, var(--series-4) 18%, transparent); color: var(--series-4); }
+  .empty h2 { font-size: 16px; margin-bottom: 6px; }
   .hc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .hc-ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--series-2) 16%, transparent); color: var(--series-2); flex: none; }
   .hc-top h2 { font-size: 16px; flex: 1; }
@@ -236,6 +240,10 @@
     <div class="hgrid" id="hgrid"></div>
   </section>
 
+  <section id="corrente" hidden aria-label="Corrente elettrica">
+    <div class="card empty" id="corrente-body"></div>
+  </section>
+
   <main id="main" hidden>
     <div class="alerts" id="alerts" aria-live="polite"></div>
     <section class="grid" id="now" aria-label="Stato attuale"></section>
@@ -296,7 +304,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.14.0';
+  const VERSION = '1.15.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -400,29 +408,51 @@
     return r.text();
   }
   /* ---------- home e navigazione (#termostati = dashboard dei termostati, altrimenti home) ---------- */
-  const view = () => (location.hash || '').replace(/^#\/?/, '') === 'termostati' ? 'termostati' : 'home';
+  const VIEWS = { termostati: 'Termostati', corrente: 'Corrente elettrica' };
+  const view = () => { const h = (location.hash || '').replace(/^#\/?/, ''); return VIEWS[h] ? h : 'home'; };
+  const BOLT = 'M13 2L4.5 13.5H11L10 22l8.5-11.5H12z';
+  function icon(kind, w, extra = {}) {
+    const i = svg('svg', { width: w, height: w, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', ...extra });
+    i.append(svg('path', { d: kind === 'bolt' ? BOLT : 'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z' }));
+    return i;
+  }
   function applyView() {
     const v = view(), has = !!S.model;
     $('home').hidden = !(has && v === 'home');
     $('main').hidden = !(has && v === 'termostati');
+    $('corrente').hidden = v !== 'corrente';
+    $('updated').hidden = v === 'corrente';                           // l'ultimo dato e' dei termostati
     $('back').hidden = v === 'home';
-    $('title').textContent = v === 'home' ? 'Casa' : 'Termostati';
-    document.title = v === 'home' ? 'Casa' : 'Stato termostati';
+    $('title').textContent = v === 'home' ? 'Casa' : VIEWS[v];
+    document.title = v === 'home' ? 'Casa' : v === 'termostati' ? 'Stato termostati' : VIEWS[v];
+    if (v === 'corrente') renderEnergy();
     if (has && v === 'termostati' && S.stale) render();            // i grafici si disegnano solo quando sono visibili (servono le larghezze)
+  }
+  // dashboard della corrente elettrica: per ora vuota, pronta per i dati
+  function renderEnergy() {
+    const b = $('corrente-body'); b.replaceChildren();
+    b.append(el('div', { class: 'big' }, [icon('bolt', 28)]), el('h2', { text: 'Nessun dato ancora' }),
+      el('div', { class: 'muted', text: 'Qui compariranno consumi, potenza e costi della corrente elettrica.' }));
   }
   window.addEventListener('hashchange', () => { applyView(); window.scrollTo(0, 0); });
   // ogni modulo della casa e' una card: per ora solo i termostati
-  const MODULES = [{ id: 'termostati', title: 'Termostati', build: buildThermoCard }];
+  const MODULES = [{ id: 'termostati', build: buildThermoCard }, { id: 'corrente', build: buildEnergyCard }];
   function renderHome() {
     const g = $('hgrid'); g.replaceChildren();
     if (!S.model) return;
     for (const m of MODULES) g.append(m.build());
   }
+  function buildEnergyCard() {
+    const a = el('a', { class: 'hcard', href: '#corrente', 'aria-label': 'Apri la corrente elettrica' });
+    const hi = el('span', { class: 'hc-ico', style: 'background:color-mix(in srgb, var(--series-4) 18%, transparent);color:var(--series-4)' }, [icon('bolt', 20)]);
+    a.append(el('div', { class: 'hc-top' }, [hi, el('h2', { text: 'Corrente elettrica' }), el('span', { class: 'chip', text: 'Nessun dato' })]),
+      el('div', { class: 'foot', style: 'margin-top:0', text: 'Consumi, potenza e costi: in arrivo' }));
+    return a;
+  }
   function buildThermoCard() {
     const bad = $('alerts').querySelectorAll('.ico.crit, .ico.warn').length;
     const a = el('a', { class: 'hcard', href: '#termostati', 'aria-label': 'Apri i termostati' });
-    const ico = svg('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' });
-    ico.append(svg('path', { d: 'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z' }));
+    const ico = icon('thermo', 20);
     a.append(el('div', { class: 'hc-top' }, [el('span', { class: 'hc-ico' }, [ico]), el('h2', { text: 'Termostati' }),
       el('span', { class: 'chip' }, [el('span', { class: 'ico ' + (bad ? 'warn' : 'good'), text: bad ? '!' : '✓' }), bad ? `${bad} ${bad === 1 ? 'avviso' : 'avvisi'}` : 'Tutto regolare'])]));
     for (const n of S.model.names) {
