@@ -1,79 +1,1807 @@
-name: Pubblica dashboard
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Termostati">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="robots" content="noindex, nofollow">
+<title>Stato termostati</title>
+<!--
+  Versione: vedi VERSION nello script (Semantic Versioning MAJOR.MINOR.PATCH).
+  Storico:
+  1.0.0  dashboard: stato attuale, grafici temperatura/umidita'/batteria, riepilogo, tabella dati
+  1.1.0  previsione durata pile
+  1.2.0  consumi e comfort: ore di caldaia, costo, T esterna, inerzia termica, mappa oraria
+  1.3.0  pulsante Ricarica
+  1.4.0  asse Y con mezzi gradi, icona fiamma/cerchio sulla caldaia
+  1.5.0  controllo automatico della nuova versione alla riapertura (iOS), blocco zoom, numero di versione
+  1.6.0  banner dati fermi configurabile (dataStaleH, default 3 h) e piu' visibile; il monitoraggio avvisa su Telegram di buchi e guasti del cloud
+  1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
+  1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
+  1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.17.0 fatture corrente reali: consumo per fascia (F1/F2/F3), prezzo dell'energia, tabella con le fasce
+  1.16.0 fatture della corrente elettrica (fatture_corrente.csv): consumo al giorno, costo per voce, tabella
+  1.15.0 card "Corrente elettrica" nella home, con la sua dashboard (per ora vuota) su #corrente
+  1.14.0 pagina iniziale "Casa" con le card dei moduli (per ora Termostati); la dashboard dei termostati si apre dalla card (#termostati)
+  1.13.3 card del termostato: solo l'icona fiamma/cerchio per lo stato della caldaia, senza testo accesa/spenta
+  1.13.2 durata dell'ultimo ciclo (dall'ultima accensione all'ultimo spegnimento) al posto del totale assoluto
+  1.13.1 ultima accensione/spegnimento con segni grafici e tempo totale di accensione
+  1.13.0 stato attuale: data e ora dell'ultima accensione e dell'ultimo spegnimento di ogni termostato
+  1.12.0 bolletta in corso con previsione, soglia mensile e confronto con il normale a parità di freddo
+  1.11.0 costo stimato con il prezzo medio delle fatture (pesato sugli Smc); grafico dei costi per fattura
+  1.10.0 costo stimato con il prezzo del gas dell'ultima fattura (modificabile a mano)
+  Regola: PATCH = correzioni, MINOR = nuove funzioni compatibili, MAJOR = cambi che rompono il formato dei dati.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+    --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; --good-text: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #f0efec; --ink2: #c3c2b7;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --good-text: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19;
+    --ink: #f0efec; --ink2: #c3c2b7;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --good-text: #0ca30c;
+  }
 
-# Pubblica su GitHub Pages la pagina site/index.html con i dati dei termostati.
-# ATTENZIONE: un sito GitHub Pages e' raggiungibile da chiunque conosca l'URL.
-# I dati pubblicati sono senza ID e numeri di serie dei crono, ma includono
-# temperature, umidita', batteria e orari di accensione della caldaia.
+  html { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }   /* niente pinch-zoom ne' doppio tap */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }   /* a schermo intero evita notch e barra home */
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  .muted { color: var(--muted); }
+  .sec { color: var(--ink2); }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
 
-on:
-  workflow_run:
-    workflows: ["Monitor termostati"]
-    types: [completed]
-  workflow_dispatch:
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .sub { color: var(--ink2); margin-top: 2px; }
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+  .back { display: inline-flex; align-items: center; gap: 4px; color: var(--ink2); text-decoration: none; font-size: 13px; margin-bottom: 4px; padding: 2px 0; }
+  .back:hover { color: var(--ink); }
+  .hgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+  .hcard { display: block; color: inherit; text-decoration: none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; min-width: 0; transition: border-color .15s, transform .15s; }
+  .hcard:hover { border-color: var(--axis); }
+  .hcard:active { transform: scale(.99); }
+  .empty { text-align: center; padding: 40px 20px; }
+  .empty .big { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; margin: 0 auto 14px; background: color-mix(in srgb, var(--series-4) 18%, transparent); color: var(--series-4); }
+  .empty h2 { font-size: 16px; margin-bottom: 6px; }
+  .hc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .hc-ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--series-2) 16%, transparent); color: var(--series-2); flex: none; }
+  .hc-top h2 { font-size: 16px; flex: 1; }
+  .hc-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .hc-row .n { flex: 1; font-weight: 600; }
+  .hc-row .t { font-size: 18px; font-weight: 600; }
+  .hc-row .h { color: var(--ink2); min-width: 46px; text-align: right; }
+  .alerts { display: grid; gap: 8px; margin-bottom: 16px; }
+  .alert { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: baseline; }
+  .alert b { font-weight: 600; }
+  .ico { font-weight: 700; display: inline-block; min-width: 1.2em; text-align: center; }
+  .ico.good { color: var(--good-text); } .ico.warn { color: #b87a00; } .ico.crit { color: var(--crit); }
+  :root[data-theme="dark"] .ico.warn { color: var(--warn); }
+  @media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .ico.warn { color: var(--warn); } }
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+  .grid.charts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); }
+  .grid.charts > .card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
 
-jobs:
-  deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    env:
-      BATTERY_FULL_MV: ${{ vars.BATTERY_FULL_MV }}
-      BATTERY_EMPTY_MV: ${{ vars.BATTERY_EMPTY_MV }}
-      BATTERY_WARN_PCT: ${{ vars.BATTERY_WARN_PCT }}
-      BATTERY_FORECAST_DAYS: ${{ vars.BATTERY_FORECAST_DAYS }}
-      BATTERY_URGENT_DAYS: ${{ vars.BATTERY_URGENT_DAYS }}
-      STALE_HOURS: ${{ vars.STALE_HOURS }}
-      PUBLISH_FATTURE: ${{ vars.PUBLISH_FATTURE }}
-    steps:
-      - uses: actions/checkout@v5
+  .th-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: baseline; }
+  .name { font-size: 16px; font-weight: 600; }
+  .chip { font-size: 12px; color: var(--ink2); white-space: nowrap; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .metric .lbl { color: var(--ink2); font-size: 12px; }
+  .metric .val { font-size: 26px; font-weight: 600; line-height: 1.15; }
+  .metric .val small { font-size: 14px; font-weight: 500; color: var(--ink2); }
+  .bat-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+  .meter { height: 8px; border-radius: 4px; position: relative; overflow: hidden; }
+  .meter::before { content: ""; position: absolute; inset: 0; background: var(--fill); opacity: .18; }
+  .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fill); border-radius: 4px; }
+  .sw { margin-top: 10px; font-size: 13px; display: grid; gap: 2px; }
+  .sw .r { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .sw .r b { white-space: nowrap; }
+  .swico { display: inline-flex; align-items: center; gap: 2px; color: var(--ink2); }
+  .swico.on { color: var(--series-2); }
+  .sw .muted { font-size: 12px; }
+  .foot { margin-top: 12px; color: var(--muted); font-size: 12px; }
 
-      - name: Prepara il sito (senza ID e numeri di serie)
-        run: |
-          mkdir -p _site
-          cp -r site/. _site/      # pagina, manifest e icone
-          python3 - <<'PY'
-          import csv, json, os
-          keep = ["ts_utc", "name", "online", "last_online_utc", "tamb", "rh",
-                  "relay", "tset", "battery_mv", "comm_level", "t_out"]
-          with open("data/intelliclima_log.csv", newline="", encoding="utf-8") as f, \
-               open("_site/data.csv", "w", newline="", encoding="utf-8") as o:
-              w = csv.DictWriter(o, fieldnames=keep, extrasaction="ignore")
-              w.writeheader()
-              w.writerows(csv.DictReader(f))
-          # fatture del gas e della corrente: solo i numeri (la colonna "note" puo' contenere dettagli personali)
-          # NON pubblicate di default (il sito Pages e' pubblico): imposta la Variable PUBLISH_FATTURE=true per includerle
-          for src, dst in (("data/fatture.csv", "_site/fatture.csv"), ("data/fatture_corrente.csv", "_site/fatture_corrente.csv")):
-              if os.path.exists(src) and os.environ.get("PUBLISH_FATTURE", "").strip().lower() in ("1", "true", "yes"):
-                  with open(src, newline="", encoding="utf-8") as f, open(dst, "w", newline="", encoding="utf-8") as o:
-                      rd = csv.DictReader(f)
-                      w = csv.DictWriter(o, fieldnames=[c for c in rd.fieldnames if c != "note"], extrasaction="ignore")
-                      w.writeheader()
-                      w.writerows(rd)
-          cfg = {}
-          for env, key in (("BATTERY_FULL_MV", "full"), ("BATTERY_EMPTY_MV", "empty"),
-                           ("BATTERY_WARN_PCT", "warn"), ("STALE_HOURS", "staleH"),
-                           ("BATTERY_FORECAST_DAYS", "fcDays"), ("BATTERY_URGENT_DAYS", "urgentDays")):
-              v = os.environ.get(env, "").strip()
-              if v:
-                  cfg[key] = float(v)
-          json.dump(cfg, open("_site/config.json", "w"))
-          PY
+  .filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .seg button[aria-pressed="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); font-weight: 600; }
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
+  .ch-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink2); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 2px; background: var(--c); margin-right: 6px; vertical-align: middle; border-radius: 1px; }
+  .legend span.dash::before { background: repeating-linear-gradient(90deg, var(--c) 0 4px, transparent 4px 7px); }
+  .legend span.band::before { height: 10px; background: color-mix(in srgb, var(--c) 22%, transparent); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-radius: 2px; box-sizing: border-box; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; touch-action: pan-y; }
+  .chart svg text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,.12); border-radius: 8px; padding: 8px 10px; font-size: 12px; min-width: 150px; z-index: 2; }
+  .tip .t { color: var(--ink2); margin-bottom: 4px; }
+  .tip .r { display: flex; align-items: baseline; gap: 6px; }
+  .tip .r::before { content: ""; width: 10px; height: 2px; background: var(--c); align-self: center; border-radius: 1px; }
+  .tip .r b { font-size: 13px; font-weight: 600; }
+  .tip .r span { color: var(--ink2); }
 
-      - id: deployment
-        uses: actions/deploy-pages@v4
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { color: var(--ink2); font-weight: 500; }
+  td.num, th.num { font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .panel p { margin: 4px 0 12px; color: var(--ink2); }
+  .panel label { display: block; margin: 8px 0 4px; font-weight: 600; font-size: 13px; }
+  .panel input[type=text], .panel input[type=password] { width: 100%; max-width: 420px; padding: 8px 10px; border: 1px solid var(--axis); border-radius: 8px; background: var(--page); }
+  .btn { border: 1px solid var(--axis); background: var(--page); border-radius: 8px; padding: 7px 14px; }
+  .btn.primary { background: var(--ink); color: var(--page); border-color: var(--ink); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .err { color: var(--crit); margin-top: 8px; }
+  footer { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 12px; }
+  footer .btn { font-size: 12px; padding: 4px 10px; }
+  main.loading { opacity: .6; transition: opacity .15s; }
+  .bico { vertical-align: -2px; margin-right: 6px; }
+  .bico.on { color: var(--series-2); } .bico.off { color: var(--muted); }
+  h3 { font-size: 13px; font-weight: 600; margin: 0; }
+  .card.inner { background: transparent; padding: 12px; }
+  .pbar { position: relative; height: 14px; border-radius: 7px; background: var(--grid); overflow: hidden; margin-top: 6px; }
+  .pbar i { position: absolute; top: 0; bottom: 0; left: 0; }
+  .pbar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-top: 10px; }
+  .kpi .lbl { color: var(--ink2); font-size: 12px; }
+  .kpi .val { font-size: 24px; font-weight: 600; line-height: 1.2; }
+  .fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink2); }
+  .fld input, select { padding: 6px 8px; border: 1px solid var(--axis); border-radius: 8px; background: var(--page); color: var(--ink); font: inherit; }
+  .filter-actions { margin-left: auto; display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  #report { position: fixed; inset: 0; z-index: 50; overflow: auto; background: var(--page); }
+  .report-bar { position: sticky; top: 0; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 16px; background: var(--page); border-bottom: 1px solid var(--border); }
+  .report-page { max-width: 820px; margin: 0 auto; padding: 16px 16px 48px; }
+  .report-page h1 { font-size: 22px; margin-bottom: 4px; }
+  @media print {
+    :root, :root[data-theme="dark"], :root[data-theme="light"] {
+      color-scheme: light; --page: #fff; --surface: #fff; --ink: #000; --ink2: #333; --muted: #555;
+      --grid: #ddd; --axis: #999; --border: #ccc; --series-1: #2a78d6; --series-2: #eb6834;
+    }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .noprint { display: none !important; }
+    html.report-open .wrap { display: none !important; }
+    #report { position: static; overflow: visible; }
+    .report-page { max-width: none; padding: 0; }
+    table, svg { break-inside: avoid; }
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <a class="back" id="back" href="#" hidden aria-label="Torna alla home"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg> Casa</a>
+      <h1 id="title">Casa</h1>
+      <div class="sub" id="updated">Caricamento…</div>
+    </div>
+    <button class="btn" id="btn-reload" type="button" title="Ricarica pagina e dati, ignorando la cache">↻ Ricarica</button>
+  </header>
+
+  <section class="panel" id="connect" hidden>
+    <h2>Collega i dati</h2>
+    <p id="connect-msg">Non trovo <code>data.csv</code> accanto a questa pagina. Puoi leggere il CSV direttamente dal repository GitHub privato oppure aprire un file CSV dal tuo computer.</p>
+    <label for="repo">Repository (proprietario/nome)</label>
+    <input type="text" id="repo" placeholder="mio-utente/termostati" autocomplete="off">
+    <label for="token">Token GitHub di sola lettura</label>
+    <input type="password" id="token" placeholder="github_pat_…" autocomplete="off">
+    <p class="muted" style="margin:6px 0 0">Crea un token fine-grained limitato a questo repository con permesso <b>Contents: Read-only</b>. Resta solo in questo browser e viene usato solo per leggere il CSV da api.github.com.</p>
+    <div class="row">
+      <button class="btn primary" id="btn-connect" type="button">Collega</button>
+      <label class="btn" for="file" style="margin:0;font-weight:400">Apri un CSV locale…</label>
+      <input type="file" id="file" accept=".csv,text/csv" hidden>
+      <label class="btn" for="file-fatt" style="margin:0;font-weight:400">Apri fatture.csv (facoltativo)…</label>
+      <input type="file" id="file-fatt" accept=".csv,text/csv" hidden>
+    </div>
+    <div class="err" id="connect-err" role="alert"></div>
+  </section>
+
+  <section id="home" hidden aria-label="Casa">
+    <div class="hgrid" id="hgrid"></div>
+  </section>
+
+  <section id="corrente" hidden aria-label="Corrente elettrica">
+    <div class="card empty" id="corrente-body"></div>
+  </section>
+
+  <main id="main" hidden>
+    <div class="alerts" id="alerts" aria-live="polite"></div>
+    <section class="grid" id="now" aria-label="Stato attuale"></section>
+
+    <div class="filters" role="group" aria-label="Intervallo di tempo">
+      <span class="sec">Periodo</span>
+      <div class="seg" id="range">
+        <button type="button" data-r="1" aria-pressed="false">24 ore</button>
+        <button type="button" data-r="7" aria-pressed="true">7 giorni</button>
+        <button type="button" data-r="30" aria-pressed="false">30 giorni</button>
+        <button type="button" data-r="0" aria-pressed="false">Tutto</button>
+      </div>
+      <span class="muted" id="range-info"></span>
+      <span class="filter-actions">
+        <button class="btn" id="btn-csv" type="button" title="Scarica il CSV del periodo selezionato">⬇ CSV</button>
+        <button class="btn" id="btn-report" type="button" title="Riepilogo mensile stampabile / PDF">Riepilogo mensile</button>
+      </span>
+    </div>
+
+    <section class="grid charts" id="charts" aria-label="Andamento"></section>
+
+    <section class="card" id="cons" style="margin-top:12px" hidden></section>
+
+    <section class="card" style="margin-top:12px">
+      <h2>Riepilogo del periodo</h2>
+      <div class="scroll" style="margin-top:8px"><table id="summary"></table></div>
+      <details>
+        <summary>Tabella dati</summary>
+        <div class="scroll"><table id="rawtable"></table></div>
+        <div class="muted" id="rawnote" style="margin-top:6px"></div>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <span id="source"></span>
+    <span id="version"></span>
+    <button class="btn" id="btn-source" type="button">Cambia sorgente dati</button>
+    <button class="btn" id="btn-theme" type="button">Tema</button>
+  </footer>
+</div>
+
+<div id="report" hidden role="dialog" aria-label="Riepilogo mensile">
+  <div class="report-bar noprint">
+    <label class="fld" style="flex-direction:row;align-items:center;gap:8px">Mese <select id="report-month"></select></label>
+    <button class="btn primary" id="report-print" type="button">Stampa / Salva PDF</button>
+    <button class="btn" id="report-close" type="button">Chiudi</button>
+  </div>
+  <div class="report-page" id="report-body"></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- configurazione (modificabile da config.json) ---------- */
+  const DEFAULTS = { full: 3250, empty: 2400, warn: 15, staleH: 6,
+                     fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
+                     boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
+                     dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
+  const VERSION = '1.17.0';
+  const CFG = { ...DEFAULTS };
+  const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
+  const TZ = 'Europe/Rome';
+
+  /* ---------- utilita' ---------- */
+  const $ = (id) => document.getElementById(id);
+  const NS = 'http://www.w3.org/2000/svg';
+  const nf0 = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 0 });
+  const nf1 = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const parts = new Intl.DateTimeFormat('it-IT', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const fHM = new Intl.DateTimeFormat('it-IT', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const fDM = new Intl.DateTimeFormat('it-IT', { timeZone: TZ, day: '2-digit', month: '2-digit' });
+  function fmtDT(ms) {
+    const p = Object.fromEntries(parts.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+    return `${p.day}-${p.month}-${p.year} ${p.hour}:${p.minute}`;
+  }
+  function ago(ms) {
+    const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (m < 60) return `${m} min fa`;
+    const h = Math.round(m / 60);
+    if (h < 48) return `${h} ore fa`;
+    return `${Math.round(h / 24)} giorni fa`;
+  }
+  function el(tag, attrs = {}, kids = []) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'text') e.textContent = v; else e.setAttribute(k, v);
+    }
+    for (const k of [].concat(kids)) if (k != null) e.append(k);
+    return e;
+  }
+  function svg(tag, attrs = {}) {
+    const e = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    return e;
+  }
+  const safe = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignora */ } },
+  };
+  const pct = (mv) => mv == null ? null : Math.max(0, Math.min(100, Math.round((mv - CFG.empty) / (CFG.full - CFG.empty) * 100)));
+
+  /* ---------- CSV ---------- */
+  function parseCSV(text) {
+    const out = []; let row = [], cur = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cur); cur = '';
+        if (row.length > 1 || row[0] !== '') out.push(row);
+        row = [];
+      } else cur += c;
+    }
+    if (cur !== '' || row.length) { row.push(cur); out.push(row); }
+    const head = out.shift() || [];
+    return out.map(r => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+  }
+  const num = (s) => (s === '' || s == null || isNaN(+s)) ? null : +s;
+  const utc = (s) => s ? Date.parse(s.replace(' ', 'T') + 'Z') : null;
+
+  function toModel(rows) {
+    const recs = rows.map(r => ({
+      t: utc(r.ts_utc), name: r.name || 'Termostato', online: r.online,
+      last: utc(r.last_online_utc), tamb: num(r.tamb), rh: num(r.rh),
+      relay: num(r.relay), tset: num(r.tset), mv: num(r.battery_mv), tout: num(r.t_out),
+    })).filter(r => r.t != null && !isNaN(r.t)).sort((a, b) => a.t - b.t);
+    const names = [];
+    for (const r of recs) if (!names.includes(r.name)) names.push(r.name);   // colore stabile per entita'
+    return { recs, names };
+  }
+
+  /* ---------- stato ---------- */
+  const S = { model: null, days: 7, source: '', remote: null, fatt: null, fattEl: null, raw: null };
+
+  /* ---------- caricamento dati ---------- */
+  async function loadConfig() {
+    try {
+      const r = await fetch('config.json', { cache: 'no-store' });
+      if (!r.ok) return;
+      const c = await r.json();
+      for (const k of Object.keys(DEFAULTS)) if (typeof c[k] === 'number' && isFinite(c[k])) CFG[k] = c[k];
+    } catch { /* config opzionale */ }
+  }
+  async function fetchRelative() {
+    const r = await fetch('data.csv?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('data.csv non trovato');
+    return r.text();
+  }
+  async function fetchGitHub(repo, token) {
+    const r = await fetch(`https://api.github.com/repos/${repo}/contents/${CSV_PATH}`, {
+      headers: { Accept: 'application/vnd.github.raw+json', Authorization: `Bearer ${token}` },
+    });
+    if (r.status === 401 || r.status === 403) throw new Error('Token non valido o senza permesso di lettura (401/403).');
+    if (r.status === 404) throw new Error(`File ${CSV_PATH} non trovato in ${repo} (oppure il token non vede il repository).`);
+    if (!r.ok) throw new Error('Errore GitHub ' + r.status);
+    return r.text();
+  }
+  /* ---------- home e navigazione (#termostati = dashboard dei termostati, altrimenti home) ---------- */
+  const VIEWS = { termostati: 'Termostati', corrente: 'Corrente elettrica' };
+  const view = () => { const h = (location.hash || '').replace(/^#\/?/, ''); return VIEWS[h] ? h : 'home'; };
+  const BOLT = 'M13 2L4.5 13.5H11L10 22l8.5-11.5H12z';
+  function icon(kind, w, extra = {}) {
+    const i = svg('svg', { width: w, height: w, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', ...extra });
+    i.append(svg('path', { d: kind === 'bolt' ? BOLT : 'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z' }));
+    return i;
+  }
+  function applyView() {
+    const v = view(), has = !!S.model;
+    $('home').hidden = !(has && v === 'home');
+    $('main').hidden = !(has && v === 'termostati');
+    $('corrente').hidden = v !== 'corrente';
+    $('updated').hidden = v === 'corrente';                           // l'ultimo dato e' dei termostati
+    $('back').hidden = v === 'home';
+    $('title').textContent = v === 'home' ? 'Casa' : VIEWS[v];
+    document.title = v === 'home' ? 'Casa' : v === 'termostati' ? 'Stato termostati' : VIEWS[v];
+    if (v === 'corrente') renderEnergy();
+    if (has && v === 'termostati' && S.stale) render();            // i grafici si disegnano solo quando sono visibili (servono le larghezze)
+  }
+  // dashboard della corrente elettrica: letture in tempo reale (ancora nessuna) e fatture
+  function renderEnergy() {
+    const host = $('corrente'); host.replaceChildren();
+    const live = el('div', { class: 'card empty' });
+    live.append(el('div', { class: 'big' }, [icon('bolt', 28)]), el('h2', { text: 'Nessuna lettura in tempo reale' }),
+      el('div', { class: 'muted', text: 'Qui compariranno consumi e potenza istantanei, quando collegheremo una sorgente dati.' }));
+    host.append(live);
+    renderFattureEl(host);
+  }
+  function renderFattureEl(host) {
+    const f = S.fattEl || [];
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
+      el('div', { class: 'ch-head' }, [el('h3', { text: 'Fatture corrente' }), el('span', { class: 'muted', text: f.length ? `${f.length} ${f.length === 1 ? 'fattura' : 'fatture'}` : '' })])]);
+    if (!f.length) {
+      card.append(el('div', { class: 'muted', style: 'margin-top:8px', text: 'Nessuna fattura caricata. Aggiungi le righe a data/fatture_corrente.csv nel repository.' }));
+      host.append(card); return;
+    }
+    const last = f[f.length - 1], withE = f.filter(x => x.eur != null);
+    const sumK = f.reduce((a, x) => a + x.kwh, 0), sumD = f.reduce((a, x) => a + x.giorni, 0);
+    const sumKe = withE.reduce((a, x) => a + x.kwh, 0), sumE = withE.reduce((a, x) => a + x.eur, 0);
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    kpi.append(
+      tile('Ultima fattura', last.eur != null ? eur(last.eur) : '—', `${dayLabel(last.d0)}–${dayLabel(last.d1)}/${last.d1.slice(2, 4)} · ${nf0.format(last.kwh)} kWh`),
+      tile('Consumo medio', `${nf1.format(sumK / sumD)} kWh/giorno`, `${nf0.format(sumK / sumD * 30.4)} kWh al mese, su ${f.length} ${f.length === 1 ? 'fattura' : 'fatture'}`),
+      tile('Costo medio', sumKe ? `${eur(sumE / sumKe)}/kWh` : '—', 'tutto compreso: quote fisse, oneri, imposte e IVA'),
+      tile('Totale speso', withE.length ? eur(sumE) : '—', `${dayLabel(f[0].d0)}/${f[0].d0.slice(2, 4)} – ${dayLabel(last.d1)}/${last.d1.slice(2, 4)}`),
+      ...(last.marg != null ? [tile('Prezzo dell\u2019energia', `${eur(last.marg)}/kWh`, 'ultima fattura, con accisa e IVA: quanto costa un kWh in più')] : []));
+    card.append(kpi);
+    const long = (x) => `${dayLabel(x.d0)}–${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`;
+    const c1 = el('div', { class: 'chart', style: 'margin-top:4px' });
+    card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Consumo al giorno' }), el('span', { class: 'muted', text: 'kWh per fattura' })]), c1);
+    const rows1 = f.map(x => ({ label: dayLabel(x.d0), long: long(x), a: x.kwh / x.giorni, partialA: x.tipo !== 'reale' }));
+    const d1 = () => groupBar(c1, rows1, false, false, { a: 'kWh al giorno', aria: 'Consumo di corrente al giorno per fattura' }, ' kWh');
+    d1(); new ResizeObserver(() => { if (c1.dataset.w != c1.clientWidth) d1(); }).observe(c1);
+    const fas = f.filter(x => x.f1 != null && x.f2 != null && x.f3 != null);
+    if (fas.length) {
+      const cf = el('div', { class: 'chart', style: 'margin-top:4px' }), tk = fas.reduce((a, x) => a + x.f1 + x.f2 + x.f3, 0), pc = (k) => Math.round(fas.reduce((a, x) => a + x[k], 0) / tk * 100);
+      card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Consumo per fascia' }), el('span', { class: 'muted', text: `kWh per fattura · F1 ${pc('f1')}% · F2 ${pc('f2')}% · F3 ${pc('f3')}%` })]),
+        el('div', { class: 'legend' }, [el('span', { style: '--c:var(--series-1)', text: 'F1 (lun–ven di giorno)' }), el('span', { style: '--c:var(--series-4)', text: 'F2 (sere e sabato)' }), el('span', { style: '--c:var(--series-3)', text: 'F3 (notte e festivi)' })]), cf);
+      const fr = fas.map(x => ({ label: dayLabel(x.d0), long: long(x), tot: x.f1 + x.f2 + x.f3, parts: [['F1', x.f1, 'var(--series-1)'], ['F2', x.f2, 'var(--series-4)'], ['F3', x.f3, 'var(--series-3)']] }));
+      const dfa = () => costStack(cf, fr, 'Consumo di corrente per fascia oraria', v => nf0.format(v) + ' kWh');
+      dfa(); new ResizeObserver(() => { if (cf.dataset.w != cf.clientWidth) dfa(); }).observe(cf);
+    }
+    const costRows = withE.map(x => {
+      const det = x.mat != null && x.tra != null && x.one != null && x.imp != null;
+      return { label: dayLabel(x.d0), long: long(x), tot: x.eur,
+               parts: det ? [['energia', x.mat, 'var(--series-1)'], ['trasporto e contatore', x.tra, 'var(--series-4)'], ['oneri di sistema', x.one, 'var(--series-3)'], ['imposte e IVA', x.imp, 'var(--series-2)']]
+                          : [['totale', x.eur, 'var(--series-1)']] };
+    });
+    if (costRows.length) {
+      const c2 = el('div', { class: 'chart', style: 'margin-top:4px' });
+      card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Costo per fattura' }), el('span', { class: 'muted', text: '€ totali, diviso per voce' })]),
+        el('div', { class: 'legend' }, [el('span', { style: '--c:var(--series-1)', text: 'Energia' }), el('span', { style: '--c:var(--series-4)', text: 'Trasporto e contatore' }),
+          el('span', { style: '--c:var(--series-3)', text: 'Oneri di sistema' }), el('span', { style: '--c:var(--series-2)', text: 'Imposte e IVA' })]), c2);
+      const d2 = () => costStack(c2, costRows, 'Costo di ogni fattura della corrente');
+      d2(); new ResizeObserver(() => { if (c2.dataset.w != c2.clientWidth) d2(); }).observe(c2);
+    }
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Giorni', 'kWh', 'F1', 'F2', 'F3', 'kWh/giorno', 'Totale', '€/kWh', 'Note'].map(c => el('th', { text: c })))]));
+    const tb = el('tbody');
+    for (const x of f.slice().reverse()) {
+      const tr = el('tr');
+      [`${dayLabel(x.d0)}/${x.d0.slice(2, 4)} – ${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`, String(x.giorni), nf0.format(x.kwh), x.f1 != null ? nf0.format(x.f1) : '—', x.f2 != null ? nf0.format(x.f2) : '—', x.f3 != null ? nf0.format(x.f3) : '—', nf1.format(x.kwh / x.giorni), x.eur != null ? eur(x.eur) : '—', x.eur != null ? eur(x.eur / x.kwh) : '—', x.tipo !== 'reale' ? 'lettura stimata' : '']
+        .forEach((v, k) => tr.append(el('td', { class: k && k < 9 ? 'num' : '', text: v }))); tb.append(tr);
+    }
+    t.append(tb);
+    card.append(el('details', {}, [el('summary', { text: 'Dettaglio fatture' }), el('div', { class: 'scroll' }, [t])]));
+    host.append(card);
+  }
+  window.addEventListener('hashchange', () => { applyView(); window.scrollTo(0, 0); });
+  // ogni modulo della casa e' una card: per ora solo i termostati
+  const MODULES = [{ id: 'termostati', build: buildThermoCard }, { id: 'corrente', build: buildEnergyCard }];
+  function renderHome() {
+    const g = $('hgrid'); g.replaceChildren();
+    if (!S.model) return;
+    for (const m of MODULES) g.append(m.build());
+  }
+  function buildEnergyCard() {
+    const a = el('a', { class: 'hcard', href: '#corrente', 'aria-label': 'Apri la corrente elettrica' });
+    const hi = el('span', { class: 'hc-ico', style: 'background:color-mix(in srgb, var(--series-4) 18%, transparent);color:var(--series-4)' }, [icon('bolt', 20)]);
+    const f = S.fattEl || [], last = f[f.length - 1];
+    a.append(el('div', { class: 'hc-top' }, [hi, el('h2', { text: 'Corrente elettrica' }), el('span', { class: 'chip', text: f.length ? `${f.length} ${f.length === 1 ? 'fattura' : 'fatture'}` : 'Nessun dato' })]));
+    if (last) a.append(el('div', { class: 'hc-row' }, [el('span', { class: 'n', text: `${dayLabel(last.d0)}–${dayLabel(last.d1)}/${last.d1.slice(2, 4)}` }),
+      el('span', { class: 't', text: last.eur != null ? eur(last.eur) : '—' }), el('span', { class: 'h', text: `${nf0.format(last.kwh)} kWh` })]));
+    a.append(el('div', { class: 'foot', style: last ? '' : 'margin-top:0', text: last ? 'Tocca per aprire le fatture' : 'Fatture e consumi: in arrivo' }));
+    return a;
+  }
+  function buildThermoCard() {
+    const bad = $('alerts').querySelectorAll('.ico.crit, .ico.warn').length;
+    const a = el('a', { class: 'hcard', href: '#termostati', 'aria-label': 'Apri i termostati' });
+    const ico = icon('thermo', 20);
+    a.append(el('div', { class: 'hc-top' }, [el('span', { class: 'hc-ico' }, [ico]), el('h2', { text: 'Termostati' }),
+      el('span', { class: 'chip' }, [el('span', { class: 'ico ' + (bad ? 'warn' : 'good'), text: bad ? '!' : '✓' }), bad ? `${bad} ${bad === 1 ? 'avviso' : 'avvisi'}` : 'Tutto regolare'])]));
+    for (const n of S.model.names) {
+      const r = latestOf(n), on = r.relay === 1;
+      const fl = svg('svg', { class: 'bico ' + (on ? 'on' : 'off'), width: 22, height: 22, viewBox: '0 0 24 24', role: 'img', 'aria-label': on ? 'Caldaia accesa' : 'Caldaia spenta', style: 'margin:0' });
+      const tt = svg('title'); tt.textContent = on ? 'Caldaia accesa' : 'Caldaia spenta'; fl.append(tt);
+      if (r.relay != null) {
+        if (on) fl.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
+        else fl.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
+      }
+      a.append(el('div', { class: 'hc-row' }, [el('span', { class: 'key', style: `background:${colorOf(n)};width:10px;height:10px;border-radius:50%;flex:none` }), el('span', { class: 'n', text: n }),
+        el('span', { class: 't', text: r.tamb == null ? '—' : nf1.format(r.tamb) + ' °C' }), el('span', { class: 'h', text: r.rh == null ? '' : '💧 ' + nf0.format(r.rh) + '%' }), fl]));
+    }
+    a.append(el('div', { class: 'foot', text: 'Tocca per aprire grafici, consumi e fatture' }));
+    return a;
+  }
+  function useText(text, label) {
+    const rawRows = parseCSV(text), m = toModel(rawRows);
+    if (!m.recs.length) throw new Error('Il CSV non contiene righe valide.');
+    S.model = m; S.source = label; S.raw = rawRows;
+    $('connect').hidden = true; applyView();
+    $('source').textContent = 'Sorgente: ' + label;
+    render();
+  }
+  async function boot() {
+    await loadConfig(); loadCons();
+    try { useText(await fetchRelative(), 'data.csv'); S.remote = { kind: 'rel' }; loadFatture(); return; } catch { /* prova GitHub */ }
+    const repo = safe.get('tm_repo'), token = safe.get('tm_token');
+    if (repo && token) {
+      try { useText(await fetchGitHub(repo, token), 'GitHub · ' + repo); S.remote = { kind: 'gh', repo, token }; loadFatture(); return; }
+      catch (e) { showConnect(e.message); return; }
+    }
+    showConnect();
+  }
+  function showConnect(err) {
+    $('connect').hidden = false;
+    $('repo').value = safe.get('tm_repo') || '';
+    $('connect-err').textContent = err || '';
+    $('updated').textContent = 'Nessun dato caricato';
+  }
+  async function refresh() {
+    if (!S.remote) return;
+    $('main').classList.add('loading');
+    try {
+      const text = S.remote.kind === 'rel' ? await fetchRelative() : await fetchGitHub(S.remote.repo, S.remote.token);
+      useText(text, S.source); loadFatture();
+    } catch { /* tiene l'ultimo render */ }
+    $('main').classList.remove('loading');
+  }
+
+  /* ---------- render ---------- */
+  function seriesOf(name) { return S.model.recs.filter(r => r.name === name); }
+  function colorOf(name) { return `var(--series-${(S.model.names.indexOf(name) % 4) + 1})`; }
+
+  function render() {
+    const { recs, names } = S.model;
+    const lastT = recs[recs.length - 1].t;
+    $('updated').textContent = `Ultimo dato ${fmtDT(lastT)} · ${ago(lastT)}`;
+    renderAlerts();
+    renderNow();
+    renderHome();
+    if ($('main').hidden) { S.stale = true; return; }                  // nella home basta questo: il resto si disegna all'apertura
+    S.stale = false;
+    const t1 = lastT, t0 = S.days ? t1 - S.days * 86400e3 : recs[0].t;
+    const inRange = recs.filter(r => r.t >= t0);
+    $('range-info').textContent = `${fmtDT(Math.max(t0, recs[0].t))} → ${fmtDT(t1)}`;
+    renderCharts(inRange, Math.max(t0, recs[0].t), t1);
+    renderCons();
+    renderSummary(inRange);
+    renderRaw(inRange);
+  }
+
+  function latestOf(name) { const s = seriesOf(name); return s[s.length - 1]; }
+
+  /* Previsione pile: regressione lineare sulle ultime letture (finestra windowDays),
+     che riparte dopo un cambio pile (salto verso l'alto > 10 punti). Stessa logica dello script Python. */
+  const rawPct = (mv) => (mv - CFG.empty) / (CFG.full - CFG.empty) * 100;   // non limitata a 0-100
+  function forecastOf(name) {
+    let pts = S.model.recs.filter(r => r.name === name && r.mv != null).map(r => [r.t / 86400e3, rawPct(r.mv)]);
+    if (!pts.length) return null;
+    const lastT = pts[pts.length - 1][0];
+    pts = pts.filter(q => q[0] >= lastT - CFG.windowDays);
+    let start = 0;
+    for (let i = 1; i < pts.length; i++) if (pts[i][1] - pts[i - 1][1] > 10) start = i;
+    pts = pts.slice(start);
+    const span = pts[pts.length - 1][0] - pts[0][0];
+    if (pts.length < 12 || span < CFG.minDays) return { status: 'insufficiente', span };
+    const n = pts.length, mt = pts.reduce((a, q) => a + q[0], 0) / n, mp = pts.reduce((a, q) => a + q[1], 0) / n;
+    let sxx = 0, sxy = 0;
+    for (const q of pts) { sxx += (q[0] - mt) ** 2; sxy += (q[0] - mt) * (q[1] - mp); }
+    const slope = sxy / sxx, now = mp + slope * (lastT - mt);
+    if (slope > -0.02) return { status: 'stabile', slope, now, span };
+    return { status: 'ok', slope, now, span, daysLeft: Math.max(0, (now - CFG.warn) / -slope) };
+  }
+  function fcLeftText(fc) {
+    if (!fc || fc.status === 'insufficiente') return 'dati in raccolta';
+    if (fc.status === 'stabile') return 'nessun calo misurabile';
+    if (fc.daysLeft > 365) return 'oltre un anno';
+    return fc.daysLeft < 1 ? 'ora' : '~' + nf0.format(fc.daysLeft) + ' giorni';
+  }
+
+  function batStatus(p, fc) {
+    if (p == null) return { cls: 'warn', ico: '?', label: 'Dato non disponibile', color: 'var(--warn)' };
+    if (p < CFG.warn) return { cls: 'crit', ico: '✕', label: 'Quasi esaurita', color: 'var(--crit)' };
+    if (fc && fc.status === 'ok' && fc.daysLeft <= CFG.urgentDays) return { cls: 'crit', ico: '✕', label: 'Da sostituire a breve', color: 'var(--crit)' };
+    if ((fc && fc.status === 'ok' && fc.daysLeft <= CFG.fcDays) || p < CFG.warn * 2) return { cls: 'warn', ico: '!', label: 'In calo', color: 'var(--warn)' };
+    return { cls: 'good', ico: '✓', label: 'Ok', color: 'var(--good)' };
+  }
+
+  function renderAlerts() {
+    const box = $('alerts'); box.replaceChildren();
+    const add = (cls, ico, title, text) => box.append(el('div', { class: 'alert' }, [
+      el('span', { class: 'ico ' + cls, text: ico }), el('span', {}, [el('b', { text: title + ' ' }), text])]));
+    const newest = S.model.recs[S.model.recs.length - 1].t;
+    if (Date.now() - newest > CFG.dataStaleH * 3600e3) add('crit', '✕', 'Dati non aggiornati:', `l'ultima rilevazione risale a ${ago(newest)}. Controlla GitHub Actions e lo scheduler esterno (cron-job.org).`);
+    for (const n of S.model.names) {
+      const r = latestOf(n); const p = pct(r.mv);
+      if (p != null && p < CFG.warn) add('crit', '✕', n + ':', `batteria quasi esaurita (${p}%), sostituisci le pile.`);
+      else {
+        const fc = forecastOf(n);
+        if (fc && fc.status === 'ok' && fc.daysLeft <= CFG.fcDays)
+          add(fc.daysLeft <= CFG.urgentDays ? 'crit' : 'warn', fc.daysLeft <= CFG.urgentDays ? '✕' : '!', n + ':',
+              `pile da sostituire tra circa ${nf0.format(fc.daysLeft)} giorni (calo ~${nf1.format(-fc.slope)} %/giorno).`);
+      }
+      if (r.online && r.online !== 'OK') add('crit', '✕', n + ':', `stato online "${r.online}".`);
+      if (r.last && Date.now() - r.last > CFG.staleH * 3600e3) add('warn', '!', n + ':', `nessun contatto col cloud da ${ago(r.last).replace(' fa', '')}.`);
+    }
+    if (!box.children.length) add('good', '✓', 'Tutto regolare:', 'batterie, connessione e rilevazioni sono nella norma.');
+  }
+
+  // ultima accensione/spegnimento: il primo campione con il relè cambiato rispetto al precedente.
+  // L'ora e' quella del controllo che l'ha visto; il cambio e' avvenuto tra il controllo prima e questo.
+  function switchTimes(name) {
+    let lastOn = null, lastOff = null, prev = null;
+    for (const r of seriesOf(name)) {
+      if (r.relay == null) continue;
+      if (prev && prev.relay !== r.relay) { const ev = { t: r.t, from: prev.t }; if (r.relay === 1) lastOn = ev; else lastOff = ev; }
+      prev = r;
+    }
+    return { lastOn, lastOff };
+  }
+  function durTxt(ms) {
+    const m = Math.max(0, Math.round(ms / 60000));
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60), mm = m % 60;
+    return h < 48 ? (mm ? `${h} h ${mm} min` : `${h} h`) : `${Math.round(h / 24)} giorni`;
+  }
+  function renderNow() {
+    const host = $('now'); host.replaceChildren();
+    for (const n of S.model.names) {
+      const r = latestOf(n); const p = pct(r.mv); const fc = forecastOf(n); const st = batStatus(p, fc);
+      const online = r.online === 'OK';
+      const card = el('article', { class: 'card' });
+      card.append(el('div', { class: 'th-top' }, [
+        el('div', { class: 'name' }, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)]),
+        el('span', { class: 'chip' }, [el('span', { class: 'ico ' + (online ? 'good' : 'crit'), text: online ? '✓' : '✕' }), online ? 'Online' : 'Offline']),
+      ]));
+      const metric = (lbl, val, unit, icon) => el('div', { class: 'metric' }, [
+        el('div', { class: 'lbl', text: lbl }),
+        el('div', { class: 'val' }, [icon || null, document.createTextNode(val), unit ? el('small', { text: ' ' + unit }) : null])]);
+      // fiamma = richiesta di calore in corso, cerchio vuoto = spenta (l'etichetta testuale resta: l'icona non e' l'unico segnale)
+      const flame = (on) => {
+        const s = svg('svg', { class: 'bico ' + (on ? 'on' : 'off'), width: 30, height: 30, viewBox: '0 0 24 24', role: 'img', 'aria-label': on ? 'Caldaia accesa' : 'Caldaia spenta' });
+        const tt = svg('title'); tt.textContent = on ? 'Caldaia accesa' : 'Caldaia spenta'; s.append(tt);
+        if (on) s.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
+        else s.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
+        return s;
+      };
+      card.append(el('div', { class: 'metrics' }, [
+        metric('Temperatura', r.tamb == null ? '—' : nf1.format(r.tamb), r.tamb == null ? '' : '°C'),
+        metric('Umidità', r.rh == null ? '—' : nf0.format(r.rh), r.rh == null ? '' : '%'),
+        metric('Caldaia', r.relay == null ? '—' : '', '', r.relay == null ? null : flame(!!r.relay)),
+      ]));
+      const sw = switchTimes(n);
+      if (sw.lastOn || sw.lastOff || r.relay != null) {
+        // segni grafici al posto delle etichette: fiamma + freccia su = accensione, cerchio + freccia giu' = spegnimento, orologio = tempo totale acceso
+        const icon = (kind, title) => {
+          const g = el('span', { class: 'swico ' + kind, role: 'img', 'aria-label': title, title });
+          const mk = (w) => svg('svg', { width: w, height: w, viewBox: '0 0 24 24', 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+          if (kind === 'clock') { const c = mk(18); c.append(svg('circle', { cx: 12, cy: 12, r: 9 }), svg('path', { d: 'M12 7v5l3.5 2' })); g.append(c); return g; }
+          const f = svg('svg', { width: 18, height: 18, viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+          if (kind === 'on') f.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
+          else f.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
+          const ar = mk(12); ar.append(svg('path', { d: kind === 'on' ? 'M12 19V5M5 12l7-7 7 7' : 'M12 5v14M5 12l7 7 7-7' }));
+          g.append(f, ar); return g;
+        };
+        const ev = (kind, title, e) => el('div', { class: 'r', title: e ? `${title}: rilevato al controllo delle ${fHM.format(e.t)}; il controllo precedente era alle ${fHM.format(e.from)}` : title },
+          [icon(kind, title), el('b', { text: e ? fmtDT(e.t) : 'nessuno nei dati' })]);
+        // durata dell'ultimo ciclo: da ultima accensione a ultimo spegnimento (se e' ancora acceso, fino ad adesso)
+        const cyc = sw.lastOn ? (sw.lastOff && sw.lastOff.t > sw.lastOn.t ? { ms: sw.lastOff.t - sw.lastOn.t, running: false } : (r.relay === 1 ? { ms: Date.now() - sw.lastOn.t, running: true } : null)) : null;
+        const hm = (ms) => `${nf0.format(Math.floor(ms / HOUR))} h ${p2(Math.round(ms / 60000) % 60)} min`;
+        card.append(el('div', { class: 'sw' }, [ev('on', 'Ultima accensione', sw.lastOn), ev('off', 'Ultimo spegnimento', sw.lastOff),
+          el('div', { class: 'r', title: 'Quanto è rimasto acceso: dall\u2019ultima accensione all\u2019ultimo spegnimento (se è ancora acceso, fino ad adesso)' },
+            [icon('clock', 'Durata accensione'), el('span', {}, [el('b', { text: cyc ? hm(cyc.ms) : '—' }), cyc && cyc.running ? el('span', { class: 'muted', text: ' · in corso' }) : null])]),
+          el('div', { class: 'muted', text: 'Orari rilevati ai controlli (di norma ogni ora): il cambio è avvenuto poco prima.' })]));
+      }
+      card.append(el('div', { class: 'bat-row' }, [
+        el('span', {}, [el('b', { text: 'Batteria ' + (p == null ? '—' : p + '%') }), el('span', { class: 'muted', text: r.mv == null ? '' : ` (${nf0.format(r.mv)} mV)` })]),
+        el('span', { class: 'chip' }, [el('span', { class: 'ico ' + st.cls, text: st.ico }), st.label]),
+      ]));
+      card.append(el('div', { class: 'meter', style: `--fill:${st.color}`, role: 'img', 'aria-label': `Batteria ${p == null ? 'non disponibile' : p + '%'}` },
+        [el('i', { style: `width:${p == null ? 0 : p}%` })]));
+      card.append(el('div', { class: 'foot', text: fc && fc.status === 'ok' ? `Pile da sostituire tra: ${fcLeftText(fc)} (calo ~${nf1.format(-fc.slope)} %/giorno)`
+        : fc && fc.status === 'stabile' ? 'Pile: nessun calo misurabile' : 'Previsione pile: servono almeno 7 giorni di dati' }));
+      if (fc && fc.status === 'ok' && fc.daysLeft > 0 && p != null && p >= CFG.warn) {
+        const due = fDay.format(new Date(Date.now() + fc.daysLeft * 864e5));
+        const b = el('button', { class: 'btn', type: 'button', style: 'margin-top:8px;font-size:12px;padding:4px 10px', text: '📅 Aggiungi al calendario' });
+        b.addEventListener('click', () => saveFile(`pile-${n.toLowerCase().replace(/[^a-z0-9]/g, '-')}.ics`, batteryICS(n, due, p), 'text/calendar;charset=utf-8'));
+        card.append(b);
+      }
+      card.append(el('div', { class: 'foot', style: 'margin-top:2px', text: r.last ? `Ultimo contatto col cloud: ${fmtDT(r.last)} (${ago(r.last)})` : 'Ultimo contatto non disponibile' }));
+      host.append(card);
+    }
+  }
+
+  /* ---------- grafici ---------- */
+  function niceTicks(lo, hi, n) {
+    const raw = (hi - lo) / n || 1, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    const step = (f <= 1.5 ? 1 : f <= 3 ? 2 : f <= 7 ? 5 : 10) * p;
+    const a = Math.floor(lo / step) * step, b = Math.ceil(hi / step) * step, out = [];
+    for (let v = a; v <= b + step / 2; v += step) out.push(+v.toFixed(10));
+    return out;
+  }
+
+  function renderCharts(inRange, t0, t1) {
+    const host = $('charts'); host.replaceChildren();
+    const defs = [
+      { title: 'Temperatura', unit: '°C', pick: r => r.tamb, fmt: v => nf1.format(v) + ' °C', minPad: 0.6, nt: 6, tset: true },
+      { title: 'Umidità relativa', unit: '%', pick: r => r.rh, fmt: v => nf0.format(v) + ' %', minPad: 1.5, nt: 5 },
+      { title: 'Batteria (stima)', unit: '%', pick: r => pct(r.mv), fmt: v => nf0.format(v) + ' %', min: 0, max: 100, ticks: [0, 25, 50, 75, 100] },
+    ];
+    for (const d of defs) {
+      const series = S.model.names.map(n => ({
+        name: n, color: colorOf(n),
+        pts: inRange.filter(r => r.name === n && d.pick(r) != null).map(r => ({ t: r.t, v: d.pick(r) })),
+      }));
+      const legendItems = series.map(s => el('span', { style: `--c:${s.color}`, text: s.name }));
+      if (d.tset) {
+        // temperatura impostata (tratteggio) e caldaia accesa (fascia) dietro la temperatura reale
+        for (const n of S.model.names) series.push({ name: n + ' impostata', color: colorOf(n), aux: true,
+          pts: inRange.filter(r => r.name === n && r.tset != null).map(r => ({ t: r.t, v: r.tset })) });
+        d.bands = boilerBands(t0, t1);
+        legendItems.push(el('span', { class: 'dash', style: '--c:var(--ink2)', text: 'Temperatura impostata' }),
+                         el('span', { class: 'band', style: '--c:var(--series-2)', text: 'Caldaia accesa' }));
+      }
+      const chart = el('div', { class: 'chart' });
+      const legend = el('div', { class: 'legend' }, legendItems);
+      host.append(el('article', { class: 'card' }, [
+        el('div', { class: 'ch-head' }, [el('h2', { text: d.title }), legend]), chart]));
+      const draw = () => lineChart(chart, d, series, t0, t1);
+      draw();
+      new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
+    }
+  }
+
+  function boilerBands(t0, t1) {
+    const out = [];
+    for (const p of piecesOf(samplesOf(S.model.recs, null), t0, t1)) {
+      if (!p.on) continue;
+      const l = out[out.length - 1];
+      if (l && p.a <= l[1] + 1) l[1] = p.b; else out.push([p.a, p.b]);
+    }
+    return out;
+  }
+
+  function lineChart(host, d, series, t0, t1) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 240;
+    host.dataset.w = host.clientWidth;
+    const all = series.flatMap(s => s.pts);
+    if (!all.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato nel periodo' })); return; }
+    const narrow = W < 480;
+    const m = { l: 40, r: narrow ? 12 : 92, t: 10, b: 26 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b, span = Math.max(1, t1 - t0);
+    let lo = Math.min(...all.map(p => p.v)), hi = Math.max(...all.map(p => p.v));
+    let ticks;
+    if (d.ticks) { ticks = d.ticks; lo = d.min; hi = d.max; }
+    else { const pad = Math.max((hi - lo) * 0.15, d.minPad || 0) || 1; ticks = niceTicks(lo - pad, hi + pad, d.nt || 4); lo = ticks[0]; hi = ticks[ticks.length - 1]; }
+    const X = t => m.l + (t - t0) / span * iw, Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+
+    const s = svg('svg', { width: W, height: H, role: 'img', tabindex: 0, 'aria-label': `${d.title}: andamento nel periodo` });
+    const dec = ticks.some(v => Math.abs(v - Math.round(v)) > 1e-9);   // mezzi gradi (17,5 · 18 · 18,5) quando servono
+    for (const v of ticks) {
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), style: 'stroke:var(--grid);stroke-width:1' }));
+      const tx = svg('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end', style: 'fill:var(--muted)' }); tx.textContent = (dec ? nf1 : nf0).format(v); s.append(tx);
+    }
+    for (const [a, b] of d.bands || []) {
+      const x = X(Math.max(a, t0)), w = Math.max(1, X(Math.min(b, t1)) - x);
+      s.append(svg('rect', { x, y: m.t, width: w, height: ih, style: 'fill:var(--series-2);opacity:.14' }));
+    }
+    s.append(svg('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, style: 'stroke:var(--axis);stroke-width:1' }));
+    const long = span > 2 * 86400e3;
+    for (let i = 0; i <= 4; i++) {
+      const t = t0 + span * i / 4, tx = svg('text', { x: m.l + iw * i / 4, y: H - 7, 'text-anchor': i === 0 ? 'start' : i === 4 ? 'end' : 'middle', style: 'fill:var(--muted)' });
+      tx.textContent = long ? fDM.format(t) : fHM.format(t); s.append(tx);
+    }
+
+    // interruzione della linea dove mancano i dati
+    const dts = series.flatMap(sr => sr.pts.slice(1).map((p, i) => p.t - sr.pts[i].t)).sort((a, b) => a - b);
+    const gap = Math.max(3 * 3600e3, (dts[Math.floor(dts.length / 2)] || 0) * 4);
+    const ends = [];
+    for (const sr of series) {
+      let seg = []; const segs = [];
+      for (const p of sr.pts) { if (seg.length && p.t - seg[seg.length - 1].t > gap) { segs.push(seg); seg = []; } seg.push(p); }
+      if (seg.length) segs.push(seg);
+      for (const sg of segs) {
+        if (sg.length > 1) s.append(svg('path', { d: sg.map((p, i) => i ? (sr.aux ? `H${X(p.t).toFixed(1)}V${Y(p.v).toFixed(1)}` : 'L' + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)) : 'M' + X(p.t).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(''), fill: 'none', style: `stroke:${sr.color};stroke-width:${sr.aux ? 1.5 : 2}`, 'stroke-dasharray': sr.aux ? '5 4' : '', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+        else if (!sr.aux) s.append(svg('circle', { cx: X(sg[0].t), cy: Y(sg[0].v), r: 2.5, style: `fill:${sr.color}` }));
+      }
+      const lp = sr.pts[sr.pts.length - 1];
+      if (lp && !sr.aux) { ends.push({ sr, lp }); s.append(svg('circle', { cx: X(lp.t), cy: Y(lp.v), r: 4, style: `fill:${sr.color};stroke:var(--surface);stroke-width:2` })); }
+    }
+    // etichette dirette: solo se non si toccano
+    const ys = ends.map(e => Y(e.lp.v)).sort((a, b) => a - b);
+    const clash = ys.some((y, i) => i && y - ys[i - 1] < 16);
+    if (!narrow && !clash) for (const e of ends) {
+      const tx = svg('text', { x: X(e.lp.t) + 10, y: Y(e.lp.v) + 4, style: 'fill:var(--ink2)' }); tx.textContent = `${e.sr.name} ${d.fmt(e.lp.v)}`; s.append(tx);
+    }
+
+    // hover
+    const times = [...new Set(all.map(p => p.t))].sort((a, b) => a - b);
+    const cross = svg('line', { y1: m.t, y2: m.t + ih, style: 'stroke:var(--ink2);stroke-width:1;opacity:.5', visibility: 'hidden' });
+    const dots = series.map(sr => svg('circle', { r: 4, style: `fill:${sr.color};stroke:var(--surface);stroke-width:2`, visibility: 'hidden' }));
+    s.append(cross, ...dots);
+    const over = svg('rect', { x: m.l, y: m.t, width: iw, height: ih, fill: 'transparent' }); s.append(over);
+    host.append(s);
+    const tip = el('div', { class: 'tip', hidden: '' }); host.append(tip);
+
+    let idx = times.length - 1;
+    const hide = () => { cross.setAttribute('visibility', 'hidden'); dots.forEach(c => c.setAttribute('visibility', 'hidden')); tip.hidden = true; };
+    const show = (i) => {
+      idx = Math.max(0, Math.min(times.length - 1, i)); const t = times[idx], x = X(t);
+      cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.setAttribute('visibility', 'visible');
+      tip.replaceChildren(el('div', { class: 't', text: fmtDT(t) }));
+      series.forEach((sr, k) => {
+        const p = sr.pts.find(q => q.t === t);
+        if (p && !sr.aux) { dots[k].setAttribute('cx', x); dots[k].setAttribute('cy', Y(p.v)); dots[k].setAttribute('visibility', 'visible'); } else dots[k].setAttribute('visibility', 'hidden');
+        tip.append(el('div', { class: 'r', style: `--c:${sr.color}` }, [el('b', { text: p ? d.fmt(p.v) : '—' }), el('span', { text: sr.name })]));
+      });
+      tip.hidden = false;
+      const left = x + 14 + tip.offsetWidth > W ? x - 14 - tip.offsetWidth : x + 14;
+      tip.style.left = Math.max(0, left) + 'px'; tip.style.top = (m.t + 6) + 'px';
+    };
+    const nearest = (t) => { let a = 0, b = times.length - 1; while (b - a > 1) { const c = (a + b) >> 1; if (times[c] < t) a = c; else b = c; } return Math.abs(times[a] - t) <= Math.abs(times[b] - t) ? a : b; };
+    over.addEventListener('pointermove', e => { const r = s.getBoundingClientRect(); show(nearest(t0 + (e.clientX - r.left - m.l) / iw * span)); });
+    over.addEventListener('pointerleave', hide);
+    s.addEventListener('keydown', e => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); } else if (e.key === 'ArrowRight') { e.preventDefault(); show(idx + 1); } else if (e.key === 'Escape') hide();
+    });
+    s.addEventListener('focus', () => show(idx));
+    s.addEventListener('blur', hide);
+  }
+
+  /* ---------- riepilogo e tabella ---------- */
+  function renderSummary(inRange) {
+    const t = $('summary'); t.replaceChildren();
+    const cols = ['Termostato', 'Temp. min / media / max', 'Umidità media', 'Batteria (inizio → fine)', 'Calo pile (ultimi 30 gg)', 'Pile da sostituire tra', 'Caldaia accesa (stima)'];
+    t.append(el('thead', {}, [el('tr', {}, cols.map(c => el('th', { text: c })))]));
+    const tb = el('tbody');
+    for (const n of S.model.names) {
+      const s = inRange.filter(r => r.name === n); if (!s.length) continue;
+      const tv = s.map(r => r.tamb).filter(v => v != null), rv = s.map(r => r.rh).filter(v => v != null);
+      const bp = s.map(r => ({ t: r.t, p: pct(r.mv) })).filter(x => x.p != null);
+      const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+      const spanD = (s[s.length - 1].t - s[0].t) / 86400e3;
+      // calo e previsione: sempre sugli ultimi windowDays, indipendenti dal periodo scelto
+      const fc = forecastOf(n);
+      const drop = !fc ? '—' : fc.status === 'ok' ? nf1.format(-fc.slope) + ' %/giorno' : fc.status === 'stabile' ? 'stabile' : '—';
+      const left = fcLeftText(fc);
+      const rl = s.filter(r => r.relay != null);
+      const heat = rl.length ? `${nf0.format(rl.filter(r => r.relay).length / rl.length * 100)} % del tempo (~${nf0.format(rl.filter(r => r.relay).length / rl.length * spanD * 24)} h)` : '—';
+      const row = el('tr');
+      row.append(el('td', {}, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)]));
+      [tv.length ? `${nf1.format(Math.min(...tv))} / ${nf1.format(avg(tv))} / ${nf1.format(Math.max(...tv))} °C` : '—',
+       rv.length ? nf0.format(avg(rv)) + ' %' : '—',
+       bp.length ? `${bp[0].p}% → ${bp[bp.length - 1].p}%` : '—', drop, left, heat].forEach(v => row.append(el('td', { class: 'num', text: v })));
+      tb.append(row);
+    }
+    t.append(tb);
+  }
+
+  function renderRaw(inRange) {
+    const t = $('rawtable'); t.replaceChildren();
+    const cols = ['Ora', 'Termostato', 'Temp.', 'Umidità', 'Batteria', 'mV', 'Caldaia', 'Stato'];
+    t.append(el('thead', {}, [el('tr', {}, cols.map(c => el('th', { text: c })))]));
+    const rows = inRange.slice().reverse(), MAX = 300, tb = el('tbody');
+    for (const r of rows.slice(0, MAX)) {
+      const p = pct(r.mv);
+      const tr = el('tr');
+      [fmtDT(r.t), r.name, r.tamb == null ? '—' : nf1.format(r.tamb) + ' °C', r.rh == null ? '—' : nf0.format(r.rh) + ' %',
+       p == null ? '—' : p + ' %', r.mv == null ? '—' : nf0.format(r.mv), r.relay == null ? '—' : (r.relay ? 'accesa' : 'spenta'), r.online || '—']
+        .forEach(v => tr.append(el('td', { class: 'num', text: v })));
+      tb.append(tr);
+    }
+    t.append(tb);
+    $('rawnote').textContent = rows.length > MAX ? `Mostrate le ultime ${MAX} righe su ${rows.length} del periodo.` : `${rows.length} righe nel periodo.`;
+  }
+
+  /* ---------- consumi e comfort ---------- */
+  // Stessa logica di "intelliclima_monitor.py consumi": caldaia ACCESA se almeno un relè e' a 1,
+  // ogni campione vale fino al successivo (max 2 h), intervalli spezzati all'ora piena, giorni/ore italiani.
+  const HEAT_CAP = 2 * 3600e3, HOUR = 3600e3;
+  const fDay = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const fHour = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23' });
+  const bucketCache = new Map();
+  function romeBucket(ms) {
+    const k = Math.floor(ms / HOUR);
+    let v = bucketCache.get(k);
+    if (!v) { v = { day: fDay.format(new Date(k * HOUR)), hour: +fHour.format(new Date(k * HOUR)) }; bucketCache.set(k, v); }
+    return v;
+  }
+  const dayLabel = (d) => d.slice(8, 10) + '/' + d.slice(5, 7);
+
+  function samplesOf(recs, room) {
+    const m = new Map();
+    for (const r of recs) {
+      let e = m.get(r.t); if (!e) { e = { on: null, tout: null }; m.set(r.t, e); }
+      if (r.relay != null && (room == null || r.name === room)) { const v = r.relay === 1; e.on = e.on == null ? v : (e.on || v); }
+      if (r.tout != null) e.tout = r.tout;
+    }
+    return m;
+  }
+  function* piecesOf(m, t0, t1) {
+    const ts = [...m.keys()].filter(t => m.get(t).on != null).sort((a, b) => a - b);
+    for (let i = 0; i < ts.length - 1; i++) {
+      const t = ts[i];
+      let a = t, b = t + Math.min(ts[i + 1] - t, HEAT_CAP);
+      if (t0 != null) a = Math.max(a, t0);
+      if (t1 != null) b = Math.min(b, t1);
+      let cur = a;
+      while (cur < b) {
+        const end = Math.min(b, (Math.floor(cur / HOUR) + 1) * HOUR);
+        yield { a: cur, b: end, on: m.get(t).on };
+        cur = end;
+      }
+    }
+  }
+  function aggregate(m, t0, t1) {
+    const days = new Map(), cells = new Map();
+    for (const p of piecesOf(m, t0, t1)) {
+      const bk = romeBucket(p.a), h = (p.b - p.a) / HOUR;
+      const d = days.get(bk.day) || [0, 0]; d[1] += h; if (p.on) d[0] += h; days.set(bk.day, d);
+      const ck = bk.day + '|' + bk.hour, c = cells.get(ck) || [0, 0]; c[1] += h; if (p.on) c[0] += h; cells.set(ck, c);
+    }
+    return { days, cells };
+  }
+  function toutByDay(m, t0, t1) {
+    const acc = new Map();
+    for (const [t, e] of m) {
+      if (e.tout == null || (t0 != null && t < t0) || (t1 != null && t >= t1)) continue;
+      const d = romeBucket(t).day, a = acc.get(d) || [0, 0]; a[0] += e.tout; a[1]++; acc.set(d, a);
+    }
+    return new Map([...acc].map(([d, a]) => [d, a[0] / a[1]]));
+  }
+  function windowStats(m, t0, t1) {
+    const { days } = aggregate(m, t0, t1), tm = toutByDay(m, t0, t1);
+    let on = 0, obs = 0; for (const v of days.values()) { on += v[0]; obs += v[1]; }
+    let hdd = 0, td = 0, sum = 0;
+    for (const [d, mean] of tm) {
+      const w = Math.min(1, (days.get(d) || [0, 0])[1] / 24);
+      if (w >= 0.5) td++;
+      hdd += Math.max(0, CFG.hddBase - mean) * w; sum += mean;
+    }
+    return { on, obs, span: (t1 - t0) / HOUR, toutDays: td, toutMean: tm.size ? sum / tm.size : null, hdd };
+  }
+  const perDay = (s) => s.obs >= 6 ? s.on / (s.obs / 24) : null;
+  // Prezzo del gas: di default la media dei prezzi marginali delle fatture (con accise e IVA, senza quota fissa),
+  // pesata sugli Smc di ciascuna; se si sceglie "a mano", quello inserito. Senza fatture vale il valore inserito.
+  function invoicePrice() {
+    const f = (S.fatt || []).filter(x => x.marg > 0 && x.smc > 0); if (!f.length) return null;
+    const w = f.reduce((a, x) => a + x.smc, 0);
+    return { marg: f.reduce((a, x) => a + x.marg * x.smc, 0) / w, n: f.length, d0: f[0].d0, d1: f[f.length - 1].d1,
+             min: Math.min(...f.map(x => x.marg)), max: Math.max(...f.map(x => x.marg)) };
+  }
+  function gasPrice() {
+    const inv = invoicePrice();
+    if (inv && !CFG.gasManual) return inv.marg;
+    return CFG.gasEur > 0 ? CFG.gasEur : 0;
+  }
+  const gasCost = (h) => (CFG.boilerKw > 0 && gasPrice() > 0 && CFG.gasKwh > 0) ? h * CFG.boilerKw / CFG.gasKwh * gasPrice() : null;
+  const nf2 = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const eur = (v) => '€ ' + nf2.format(v);
+  const chg = (c, p) => (c == null || p == null || p <= 0) ? '' : ` (${(c / p - 1) * 100 >= 0 ? '+' : '−'}${nf0.format(Math.abs((c / p - 1) * 100))}%)`;
+
+  function loadCons() {
+    try {
+      const o = JSON.parse(safe.get('tm_cons') || '{}');
+      for (const k of ['boilerKw', 'gasEur', 'gasKwh', 'hddBase', 'budget']) if (typeof o[k] === 'number' && isFinite(o[k])) CFG[k] = o[k];
+      if (typeof o.gasManual === 'boolean') CFG.gasManual = o.gasManual;
+    } catch { /* ignora */ }
+  }
+  const median = (a) => { const s = a.slice().sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+
+  // Inerzia: episodi di riscaldamento = campioni consecutivi (<= 2,5 h) con relè acceso; velocita' = (T finale - T iniziale)/tempo.
+  // Le rilevazioni sono orarie: la stima e' grossolana e migliora con i giorni.
+  function inertiaOf(name) {
+    const s = seriesOf(name).filter(r => r.relay != null && r.tamb != null);
+    const heat = [], cool = [];
+    let i = 0;
+    while (i < s.length) {
+      let j = i; const on = s[i].relay === 1;
+      while (j + 1 < s.length && (s[j + 1].relay === 1) === on && s[j + 1].t - s[j].t <= 2.5 * HOUR) j++;
+      if (j > i) {
+        const dt = (s[j].t - s[i].t) / HOUR, dT = s[j].tamb - s[i].tamb;
+        if (on && dT >= 0.3 && dt >= 1) heat.push(dT / dt);
+        if (!on && dT <= -0.3 && dt >= 1) cool.push(-dT / dt);
+      }
+      i = j + 1;
+    }
+    return { heat, cool };
+  }
+
+  function barChart(host, items, color) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 220; host.dataset.w = host.clientWidth;
+    if (!items.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
+    const m = { l: 34, r: 8, t: 8, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const ticks = niceTicks(0, Math.max(1, ...items.map(x => x.v)), 4), top = ticks[ticks.length - 1];
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Ore di caldaia accesa per giorno' });
+    for (const v of ticks) {
+      const y = m.t + ih - v / top * ih;
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: y + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t);
+    }
+    const bw = iw / items.length, every = Math.ceil(items.length / Math.max(1, Math.floor(iw / 44)));
+    items.forEach((it, k) => {
+      const h = it.v / top * ih, x = m.l + k * bw + bw * 0.15;
+      const r = svg('rect', { x, y: m.t + ih - h, width: Math.max(1, bw * 0.7), height: Math.max(0, h), rx: 2, fill: color, opacity: it.partial ? 0.45 : 1 });
+      const tt = svg('title'); tt.textContent = `${dayLabel(it.day)}: ${nf1.format(it.v)} h${it.partial ? ' (dati parziali)' : ''}`; r.append(tt); s.append(r);
+      if (k % every === 0) { const t = svg('text', { x: x + bw * 0.35, y: H - 8, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = dayLabel(it.day); s.append(t); }
+    });
+    host.append(s);
+  }
+
+  // costo per fattura: barre impilate (consumi, quota fissa, imposte) con il totale sopra
+  function costStack(host, rows, aria = 'Costo di ogni fattura gas', fmt = eur) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 230; host.dataset.w = host.clientWidth;
+    if (!rows.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
+    const m = { l: 44, r: 8, t: 18, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const ticks = niceTicks(0, Math.max(1, ...rows.map(r => r.tot)), 4), top = ticks[ticks.length - 1];
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': aria });
+    for (const v of ticks) {
+      const y = m.t + ih - v / top * ih;
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: y + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t);
+    }
+    const bw = iw / rows.length, w = Math.min(46, bw * 0.6);
+    rows.forEach((r, k) => {
+      const x = m.l + k * bw + (bw - w) / 2; let y = m.t + ih;
+      for (const [lab, v, col] of r.parts) {
+        if (!(v > 0)) continue;
+        const h = v / top * ih; y -= h;
+        const rect = svg('rect', { x, y, width: w, height: Math.max(0, h), fill: col, stroke: 'var(--card, #fff)', 'stroke-width': 1 });
+        const tt = svg('title'); tt.textContent = `${r.long}: ${lab} ${fmt(v)}`; rect.append(tt); s.append(rect);
+      }
+      const tv = svg('text', { x: x + w / 2, y: y - 4, 'text-anchor': 'middle', fill: 'var(--ink)', 'font-weight': '600' }); tv.textContent = nf0.format(r.tot); s.append(tv);
+      const tl = svg('text', { x: x + w / 2, y: H - 8, 'text-anchor': 'middle', fill: 'var(--ink2)' }); tl.textContent = r.label; s.append(tl);
+    });
+    host.append(s);
+  }
+
+  function scatterChart(host, pts, color) {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 220; host.dataset.w = host.clientWidth;
+    if (pts.length < 3) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Servono almeno 3 giorni completi con temperatura esterna' })); return; }
+    const m = { l: 34, r: 10, t: 8, b: 34 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const xt = niceTicks(Math.min(...pts.map(p => p.x)), Math.max(...pts.map(p => p.x)), 5), yt = niceTicks(0, Math.max(1, ...pts.map(p => p.y)), 4);
+    const x0 = xt[0], x1 = xt[xt.length - 1] || x0 + 1, y1 = yt[yt.length - 1];
+    const X = v => m.l + (v - x0) / ((x1 - x0) || 1) * iw, Y = v => m.t + ih - v / y1 * ih;
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Ore di caldaia contro temperatura esterna media' });
+    for (const v of yt) {
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t);
+    }
+    for (const v of xt) { const t = svg('text', { x: X(v), y: H - 16, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = nf0.format(v); s.append(t); }
+    const lab = svg('text', { x: m.l + iw / 2, y: H - 2, 'text-anchor': 'middle', fill: 'var(--ink2)' }); lab.textContent = 'T esterna media del giorno (°C)'; s.append(lab);
+    for (const p of pts) {
+      const c = svg('circle', { cx: X(p.x), cy: Y(p.y), r: 4, fill: color, stroke: 'var(--surface)', 'stroke-width': 1 });
+      const tt = svg('title'); tt.textContent = `${dayLabel(p.day)}: ${nf1.format(p.y)} h con ${nf1.format(p.x)} °C fuori`; c.append(tt); s.append(c);
+    }
+    host.append(s);
+  }
+
+  function heatmap(host, cells, dayList, color) {
+    host.replaceChildren();
+    const cw = 22, ch = 16, ml = 44, mt = 18;
+    const s = svg('svg', { width: ml + 24 * cw + 4, height: mt + dayList.length * ch + 4, role: 'img', 'aria-label': 'Mappa oraria: quota di tempo con caldaia accesa per giorno e ora' });
+    for (let h = 0; h < 24; h += 3) { const t = svg('text', { x: ml + h * cw + cw / 2, y: 12, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = String(h).padStart(2, '0'); s.append(t); }
+    dayList.forEach((d, r) => {
+      const t = svg('text', { x: ml - 6, y: mt + r * ch + 12, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = dayLabel(d); s.append(t);
+      for (let h = 0; h < 24; h++) {
+        const c = cells.get(d + '|' + h), has = c && c[1] >= 0.25, f = has ? Math.min(1, c[0] / c[1]) : 0;
+        const rect = svg('rect', { x: ml + h * cw, y: mt + r * ch, width: cw - 1, height: ch - 1, rx: 2,
+          fill: has ? `color-mix(in srgb, ${color} ${Math.round(f * 100)}%, var(--grid))` : 'none', stroke: has ? 'none' : 'var(--grid)', 'stroke-dasharray': has ? '' : '2 2' });
+        const tt = svg('title'); tt.textContent = has ? `${dayLabel(d)} ${String(h).padStart(2, '0')}:00 — acceso ${nf0.format(f * 100)}% dell'ora` : `${dayLabel(d)} ${String(h).padStart(2, '0')}:00 — nessun dato`;
+        rect.append(tt); s.append(rect);
+      }
+    });
+    host.append(s);
+  }
+
+  const consUI = { room: '', setOpen: false, sMode: 'week', sMetric: 'h' };
+  function renderCons() {
+    if ($('main').hidden) { S.stale = true; return; }                  // fuori dalla pagina dei termostati si ridisegna all'apertura
+    const host = $('cons'); host.replaceChildren();
+    const recs = S.model.recs, names = S.model.names, all = samplesOf(recs, null);
+    if (![...all.values()].some(e => e.on != null)) { host.hidden = true; return; }
+    host.hidden = false;
+    const tmax = Math.max(...all.keys()), D = 86400e3;
+    const cur = windowStats(all, tmax - 7 * D, tmax), prev = windowStats(all, tmax - 14 * D, tmax - 7 * D);
+    const pc = perDay(cur), pp = prev.obs >= 24 ? perDay(prev) : null;
+    const cost = gasCost(cur.on), costP = pp != null ? gasCost(prev.on) : null;
+
+    host.append(el('div', { class: 'ch-head' }, [el('h2', { text: 'Consumi e comfort' }), el('span', { class: 'muted', text: 'Stime: il relè indica la richiesta di calore, non il gas realmente bruciato' })]));
+
+    // KPI ultimi 7 giorni
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    if (cur.obs >= 24) {
+      kpi.append(tile('Caldaia accesa, 7 giorni', `${nf1.format(cur.on)} h`, `${nf1.format(pc)} h/giorno${pp != null ? `, prima ${nf1.format(pp)}${chg(pc, pp)}` : ''}`));
+      kpi.append(tile('Costo stimato, 7 giorni', cost != null ? eur(cost) : '—', cost != null ? (costP != null ? `prima ${eur(costP)}` : '') : 'imposta potenza e prezzo del gas'));
+      if (cur.toutDays) {
+        let sub = '';
+        if (cur.toutDays >= 4 && cur.hdd >= 5) { sub = `${nf0.format(cur.hdd)} gradi-giorno · ${nf2.format(cur.on / cur.hdd)} h per gradogiorno`; if (prev.toutDays >= 4 && prev.hdd >= 5) sub += ` (prima ${nf2.format(prev.on / prev.hdd)})`; }
+        kpi.append(tile('T esterna media, 7 giorni', `${nf1.format(cur.toutMean)} °C`, sub));
+      } else kpi.append(tile('T esterna media', '—', 'compare dopo la prima raccolta con LATITUDE/LONGITUDE'));
+    } else kpi.append(tile('Dati insufficienti', '—', 'servono almeno 24 ore di rilevazioni'));
+    host.append(kpi);
+    if (cur.obs >= 24 && cur.obs < 0.9 * cur.span) host.append(el('div', { class: 'muted', style: 'margin-top:6px', text: `Dati disponibili per il ${nf0.format(cur.obs / cur.span * 100)}% del periodo.` }));
+
+    // impostazioni
+    const set = el('details', {}, [el('summary', { text: 'Impostazioni costo' })]);
+    if (consUI.setOpen) set.open = true;
+    set.addEventListener('toggle', () => { consUI.setOpen = set.open; });
+    const form = el('div', { class: 'row' });
+    const fld = (key, lbl, step) => {
+      const inp = el('input', { type: 'number', min: '0', step, value: String(CFG[key]), style: 'width:110px' });
+      inp.addEventListener('change', () => {
+        const v = parseFloat(String(inp.value).replace(',', '.'));
+        if (!isFinite(v) || v < 0) { inp.value = String(CFG[key]); return; }
+        CFG[key] = v;
+        let o = {}; try { o = JSON.parse(safe.get('tm_cons') || '{}'); } catch { /* ignora */ }
+        o[key] = v; safe.set('tm_cons', JSON.stringify(o)); renderCons();
+      });
+      return el('label', { class: 'fld' }, [lbl, inp]);
+    };
+    const inv = invoicePrice();
+    const priceFld = () => {
+      const manual = !inv || CFG.gasManual;
+      const inp = el('input', { type: 'number', min: '0', step: '0.01', value: String(manual ? CFG.gasEur : Math.round(inv.marg * 100) / 100), style: 'width:110px' });
+      if (!manual) inp.disabled = true;
+      inp.addEventListener('change', () => {
+        const v = parseFloat(String(inp.value).replace(',', '.'));
+        if (!isFinite(v) || v < 0) { inp.value = String(CFG.gasEur); return; }
+        CFG.gasEur = v; let o = {}; try { o = JSON.parse(safe.get('tm_cons') || '{}'); } catch { /* ignora */ }
+        o.gasEur = v; safe.set('tm_cons', JSON.stringify(o)); renderCons();
+      });
+      const kids = ['Prezzo gas (€/Smc)', inp];
+      if (inv) {
+        const cb = el('input', { type: 'checkbox' }); cb.checked = !!CFG.gasManual;
+        cb.addEventListener('change', () => {
+          CFG.gasManual = cb.checked; if (cb.checked && !(CFG.gasEur > 0)) CFG.gasEur = Math.round(inv.marg * 100) / 100;
+          let o = {}; try { o = JSON.parse(safe.get('tm_cons') || '{}'); } catch { /* ignora */ }
+          o.gasManual = CFG.gasManual; o.gasEur = CFG.gasEur; safe.set('tm_cons', JSON.stringify(o)); renderCons();
+        });
+        kids.push(el('span', { style: 'font-size:12px;display:flex;gap:6px;align-items:center;margin-top:2px' }, [cb, 'Imposta a mano']));
+      }
+      return el('label', { class: 'fld' }, kids);
+    };
+    form.append(fld('boilerKw', 'Potenza caldaia (kW)', '0.5'), priceFld(), fld('gasKwh', 'kWh per Smc', '0.1'), fld('hddBase', 'Base gradi-giorno (°C)', '0.5'), fld('budget', 'Soglia mensile (€, 0 = nessuna)', '5'));
+    set.append(form, el('div', { class: 'muted', style: 'margin-top:6px', text: (inv && !CFG.gasManual ? `Prezzo del gas: media pesata sugli Smc di ${inv.n} ${inv.n === 1 ? 'fattura' : 'fatture'} (${dayLabel(inv.d0)}/${inv.d0.slice(2, 4)}–${dayLabel(inv.d1)}/${inv.d1.slice(2, 4)}), ${nf2.format(inv.marg)} €/Smc` + (inv.n > 1 ? ` (da ${nf2.format(inv.min)} a ${nf2.format(inv.max)})` : '') + ` con accise e IVA, senza quota fissa. ` : '') + 'Costo = ore × kW ÷ kWh/Smc × €/Smc. Usa la potenza al focolare (targhetta). Salvate in questo browser; per renderle fisse usa le Variables del repository (BOILER_KW, GAS_EUR_SMC…) per il report Telegram.' }));
+    host.append(set);
+
+    // grafici giornalieri
+    const wk = aggregate(all), tm = toutByDay(all);
+    const dayKeys = [...wk.days.keys()].sort();
+    const last30 = dayKeys.slice(-30).map(d => ({ day: d, v: wk.days.get(d)[0], obs: wk.days.get(d)[1], partial: wk.days.get(d)[1] < 22 }));
+    const color = 'var(--series-2)';
+    const cd = el('div', { class: 'chart' }), cs = el('div', { class: 'chart' });
+    const sc = dayKeys.filter(d => tm.has(d) && wk.days.get(d)[1] >= 20).map(d => ({ day: d, x: tm.get(d), y: wk.days.get(d)[0] }));
+    host.append(el('div', { class: 'grid charts', style: 'margin-top:12px' }, [
+      el('article', { class: 'card inner' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Ore di caldaia accesa al giorno' }), el('span', { class: 'muted', text: 'barre chiare = giorno incompleto' })]), cd]),
+      el('article', { class: 'card inner' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Caldaia contro freddo esterno' }), el('span', { class: 'muted', text: 'un punto = un giorno completo' })]), cs]),
+    ]));
+    const dd = () => barChart(cd, last30, color), ds = () => scatterChart(cs, sc, color);
+    dd(); ds();
+    new ResizeObserver(() => { if (cd.dataset.w != cd.clientWidth) dd(); if (cs.dataset.w != cs.clientWidth) ds(); }).observe(cd);
+
+    // tabella gemella giornaliera + confronto settimanale
+    const tw = el('details', {}, [el('summary', { text: 'Dati per giorno e confronto settimana su settimana' })]);
+    const t1 = el('table'); t1.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Ore accese', 'Ore/giorno', 'T esterna', 'Gradi-giorno', 'Ore per gradogiorno', 'Costo'].map(c => el('th', { text: c })))]));
+    const b1 = el('tbody');
+    for (const [lbl, st] of [['Ultimi 7 giorni', cur], ['7 giorni prima', prev]]) {
+      const ok = st.obs >= 24, eff = ok && st.toutDays >= 4 && st.hdd >= 5 ? nf2.format(st.on / st.hdd) : '—', c = ok ? gasCost(st.on) : null;
+      const tr = el('tr'); [lbl, ok ? nf1.format(st.on) : '—', ok ? nf1.format(perDay(st)) : '—', st.toutDays ? nf1.format(st.toutMean) + ' °C' : '—', st.toutDays ? nf0.format(st.hdd) : '—', eff, c != null ? eur(c) : '—']
+        .forEach((v, i) => tr.append(el('td', { class: i ? 'num' : '', text: v }))); b1.append(tr);
+    }
+    t1.append(b1);
+    const t2 = el('table', { style: 'margin-top:12px' }); t2.append(el('thead', {}, [el('tr', {}, ['Giorno', 'Ore accese', 'Ore osservate', 'T esterna', 'Costo'].map(c => el('th', { text: c })))]));
+    const b2 = el('tbody');
+    for (const d of dayKeys.slice(-30).reverse()) {
+      const v = wk.days.get(d), c = gasCost(v[0]), tr = el('tr');
+      [dayLabel(d), nf1.format(v[0]), nf1.format(v[1]), tm.has(d) ? nf1.format(tm.get(d)) + ' °C' : '—', c != null ? eur(c) : '—'].forEach((x, i) => tr.append(el('td', { class: i ? 'num' : '', text: x }))); b2.append(tr);
+    }
+    t2.append(b2);
+    tw.append(el('div', { class: 'scroll', style: 'margin-top:8px' }, [t1, t2])); host.append(tw);
+
+    renderBill(host, all);
+    renderSeason(host, all);
+    renderFatture(host, all);
+
+    // mappa oraria
+    const sel = el('select', { 'aria-label': 'Sorgente mappa oraria' }, [el('option', { value: '', text: 'Caldaia (tutte le zone)' }), ...names.map(n => el('option', { value: n, text: n }))]);
+    sel.value = consUI.room;
+    const hm = el('div', { class: 'scroll' });
+    const hmCard = el('article', { class: 'card inner', style: 'margin-top:12px' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Mappa oraria (ultimi 28 giorni)' }), sel]), hm,
+      el('div', { class: 'muted', style: 'margin-top:6px', text: 'Più scuro = più minuti con richiesta di calore in quell’ora. Tratteggiato = nessun dato.' })]);
+    host.append(hmCard);
+    const drawHM = () => {
+      const m = samplesOf(recs, consUI.room || null), { cells, days } = aggregate(m), list = [...days.keys()].sort().slice(-28);
+      heatmap(hm, cells, list, color);
+      let twin = hmCard.querySelector('details'); if (twin) twin.remove();
+      const tbl = el('table'); tbl.append(el('thead', {}, [el('tr', {}, ['Giorno', ...Array.from({ length: 24 }, (_, h) => String(h).padStart(2, '0'))].map(c => el('th', { text: c })))]));
+      const tb = el('tbody');
+      for (const d of list.slice().reverse()) {
+        const tr = el('tr', {}, [el('td', { text: dayLabel(d) })]);
+        for (let h = 0; h < 24; h++) { const c = cells.get(d + '|' + h); tr.append(el('td', { class: 'num', text: c && c[1] >= 0.25 ? nf0.format(c[0] / c[1] * 100) : '·' })); }
+        tb.append(tr);
+      }
+      tbl.append(tb);
+      hmCard.append(el('details', {}, [el('summary', { text: 'Valori della mappa (% dell’ora con caldaia accesa)' }), el('div', { class: 'scroll' }, [tbl])]));
+    };
+    sel.addEventListener('change', () => { consUI.room = sel.value; drawHM(); });
+    drawHM();
+
+    // inerzia termica
+    const inn = el('table'); inn.append(el('thead', {}, [el('tr', {}, ['Stanza', 'Per salire di 1 °C', 'Per salire di 2 °C', 'Raffreddamento', 'Episodi'].map(c => el('th', { text: c })))]));
+    const ib = el('tbody');
+    for (const n of names) {
+      const { heat, cool } = inertiaOf(n), ok = heat.length >= 5, rate = ok ? median(heat) : null, cr = cool.length >= 5 ? median(cool) : null;
+      const fm = (min) => min >= 90 ? `${nf1.format(min / 60)} h` : `${nf0.format(min)} min`;
+      const tr = el('tr', {}, [el('td', {}, [el('span', { class: 'key', style: `background:${colorOf(n)}` }), document.createTextNode(n)])]);
+      [rate ? fm(60 / rate) : '—', rate ? fm(120 / rate) : '—', cr ? `−${nf1.format(cr)} °C/h` : '—', ok ? `${heat.length} salita · ${cool.length} discesa` : `${heat.length} (ne servono 5)`]
+        .forEach(v => tr.append(el('td', { class: 'num', text: v }))); ib.append(tr);
+    }
+    inn.append(ib);
+    host.append(el('article', { class: 'card inner', style: 'margin-top:12px' }, [el('div', { class: 'ch-head' }, [el('h3', { text: 'Inerzia termica' }), el('span', { class: 'muted', text: 'mediana degli episodi con caldaia accesa' })]),
+      el('div', { class: 'scroll' }, [inn]),
+      el('div', { class: 'muted', style: 'margin-top:6px', text: 'Le rilevazioni sono orarie, quindi è una stima grossolana. Esempio d’uso: se una stanza impiega 90 minuti per salire di 1 °C e la vuoi a +2 °C alle 7:00, il programma deve partire circa 3 ore prima.' })]));
+  }
+
+  /* ---------- andamento stagionale ---------- */
+  const MONTHS = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+  const MON3 = MONTHS.map(m => m.slice(0, 3));
+  const p2 = (n) => String(n).padStart(2, '0');
+  const utcDay = (ds) => { const [y, m, d] = ds.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+  const dayStr = (dt) => `${dt.getUTCFullYear()}-${p2(dt.getUTCMonth() + 1)}-${p2(dt.getUTCDate())}`;
+  function isoWeekOf(ds) {                       // settimana ISO (lunedi' - domenica)
+    const dt = utcDay(ds), dow = (dt.getUTCDay() + 6) % 7;
+    const mon = new Date(dt); mon.setUTCDate(dt.getUTCDate() - dow);
+    const thu = new Date(mon); thu.setUTCDate(mon.getUTCDate() + 3);
+    const y = thu.getUTCFullYear(), jan1 = Date.UTC(y, 0, 1);
+    return { y, w: Math.floor((thu - jan1) / 864e5 / 7) + 1, mon: dayStr(mon) };
+  }
+  function bucketOf(ds, mode) {
+    if (mode === 'month') {
+      const y = +ds.slice(0, 4), m = +ds.slice(5, 7);
+      return { key: ds.slice(0, 7), label: MON3[m - 1], long: `${MONTHS[m - 1]} ${y}`, expected: 24 * new Date(Date.UTC(y, m, 0)).getUTCDate() };
+    }
+    const iw = isoWeekOf(ds);
+    return { key: `${iw.y}-W${p2(iw.w)}`, label: dayLabel(iw.mon), long: `settimana ${iw.w} (dal ${dayLabel(iw.mon)}) ${iw.y}`, expected: 168 };
+  }
+  const prevYearKey = (k) => (+k.slice(0, 4) - 1) + k.slice(4);
+  function bucketStats(days, tm, keys) {
+    let on = 0, obs = 0, hdd = 0, sum = 0, n = 0, td = 0;
+    for (const d of keys) {
+      const v = days.get(d) || [0, 0]; on += v[0]; obs += v[1];
+      if (tm.has(d)) { const w = Math.min(1, v[1] / 24); if (w >= 0.5) td++; hdd += Math.max(0, CFG.hddBase - tm.get(d)) * w; sum += tm.get(d); n++; }
+    }
+    return { on, obs, hdd, toutMean: n ? sum / n : null, toutDays: td };
+  }
+
+  function groupBar(host, items, hasPrev, isEur, labels = { a: 'stagione attuale', b: 'anno prima' }, unit = ' h') {
+    host.replaceChildren();
+    const W = Math.max(260, Math.floor(host.clientWidth)), H = 230; host.dataset.w = host.clientWidth;
+    if (!items.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
+    const m = { l: 40, r: 8, t: 8, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const vals = items.flatMap(x => [x.a, x.b]).filter(v => v != null);
+    const ticks = niceTicks(0, Math.max(1, ...vals), 4), top = ticks[ticks.length - 1];
+    const dec = ticks.some(v => Math.abs(v - Math.round(v)) > 1e-9);
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': labels.aria || (isEur ? 'Costo stimato per periodo' : 'Ore di caldaia accesa per periodo') });
+    for (const v of ticks) {
+      const y = m.t + ih - v / top * ih;
+      s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
+      const t = svg('text', { x: m.l - 6, y: y + 4, 'text-anchor': 'end', fill: 'var(--ink2)' }); t.textContent = (dec ? nf1 : nf0).format(v); s.append(t);
+    }
+    const gw = iw / items.length, bw = Math.max(2, Math.min(26, gw * (hasPrev ? 0.36 : 0.7))), every = Math.ceil(items.length / Math.max(1, Math.floor(iw / 40)));
+    const fv = (v) => isEur ? eur(v) : nf1.format(v) + unit;
+    items.forEach((it, k) => {
+      const cx = m.l + gw * (k + 0.5);
+      const bars = hasPrev ? [['b', cx - bw - 1, 'var(--series-1)', it.partialB, labels.b], ['a', cx + 1, 'var(--series-2)', it.partialA, labels.a]] : [['a', cx - bw / 2, 'var(--series-2)', it.partialA, labels.a]];
+      for (const [f, x, color, partial, lbl] of bars) {
+        const v = it[f]; if (v == null) continue;
+        const h = v / top * ih;
+        const r = svg('rect', { x, y: m.t + ih - h, width: bw, height: Math.max(0, h), rx: 2, fill: color, opacity: partial ? 0.45 : 1 });
+        const tt = svg('title'); tt.textContent = `${it.long} · ${lbl}: ${fv(v)}${partial ? ' (periodo incompleto)' : ''}`; r.append(tt); s.append(r);
+      }
+      if (k % every === 0) { const t = svg('text', { x: cx, y: H - 8, 'text-anchor': 'middle', fill: 'var(--ink2)' }); t.textContent = it.label; s.append(t); }
+    });
+    s.append(svg('line', { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, stroke: 'var(--axis)' }));
+    host.append(s);
+  }
+
+  function renderSeason(host, all) {
+    const wk = aggregate(all), tm = toutByDay(all), keys = [...wk.days.keys()].sort();
+    if (!keys.length) return;
+    const last = keys[keys.length - 1], sy = +last.slice(0, 4) - (+last.slice(5, 7) < 10 ? 1 : 0);   // la stagione va dal 1 ottobre al 30 settembre
+    const group = (y) => {
+      const g = new Map();
+      for (const d of keys) if (d >= `${y}-10-01` && d < `${y + 1}-10-01`) {
+        const b = bucketOf(d, consUI.sMode); let e = g.get(b.key); if (!e) { e = { ...b, days: [] }; g.set(b.key, e); } e.days.push(d);
+      }
+      return g;
+    };
+    const cur = group(sy), prev = group(sy - 1), eurOk = gasCost(1) != null, isEur = consUI.sMetric === 'eur' && eurOk;
+    const val = (st) => isEur ? gasCost(st.on) : st.on;
+    const rows = [...cur.values()].map(b => {
+      const sa = bucketStats(wk.days, tm, b.days), pb = prev.get(prevYearKey(b.key)), sb = pb ? bucketStats(wk.days, tm, pb.days) : null;
+      return { ...b, sa, sb, a: val(sa), b: sb ? val(sb) : null, partialA: sa.obs < 0.9 * b.expected, partialB: sb ? sb.obs < 0.9 * pb.expected : false };
+    });
+    const hasPrev = rows.some(r => r.sb);
+
+    const seg = (opts, cur_, on) => { const g = el('div', { class: 'seg' }); for (const [v, l, dis] of opts) { const b = el('button', { type: 'button', 'aria-pressed': String(cur_ === v), text: l }); if (dis) { b.disabled = true; b.title = 'Imposta potenza e prezzo del gas'; } b.addEventListener('click', () => on(v)); g.append(b); } return g; };
+    const chart = el('div', { class: 'chart' });
+    const legend = el('div', { class: 'legend' }, [el('span', { style: '--c:var(--series-2)', text: `Stagione ${sy}/${sy + 1}` }), hasPrev ? el('span', { style: '--c:var(--series-1)', text: `Stagione ${sy - 1}/${sy}` }) : null]);
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
+      el('div', { class: 'ch-head' }, [el('h3', { text: 'Andamento stagionale' }),
+        el('div', { class: 'row', style: 'margin:0' }, [
+          seg([['week', 'Settimane'], ['month', 'Mesi']], consUI.sMode, v => { consUI.sMode = v; renderCons(); }),
+          seg([['h', 'Ore'], ['eur', 'Costo', !eurOk]], isEur ? 'eur' : 'h', v => { consUI.sMetric = v; renderCons(); })])]),
+      legend, chart,
+      el('div', { class: 'muted', style: 'margin-top:6px', text: hasPrev ? 'Barre chiare = periodo con dati incompleti. Il confronto è con la stessa settimana o lo stesso mese della stagione precedente.'
+        : 'Dal 1° ottobre. Il confronto con la stessa settimana dell’anno prima comparirà quando avrai i dati della stagione precedente. Barre chiare = periodo incompleto.' })]);
+    host.append(card);
+    const draw = () => groupBar(chart, rows, hasPrev, isEur);
+    draw(); new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
+
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Ore accese', 'Costo', 'T esterna', 'Gradi-giorno', 'Anno prima (ore)', 'Variazione'].map(c => el('th', { text: c })))]));
+    const tb = el('tbody');
+    for (const r of rows.slice().reverse()) {
+      const c = gasCost(r.sa.on), tr = el('tr');
+      [r.long + (r.partialA ? ' *' : ''), nf1.format(r.sa.on), c != null ? eur(c) : '—', r.sa.toutDays ? nf1.format(r.sa.toutMean) + ' °C' : '—', r.sa.toutDays ? nf0.format(r.sa.hdd) : '—',
+       r.sb ? nf1.format(r.sb.on) : '—', r.sb && r.sb.on > 0 && !r.partialA && !r.partialB ? chg(r.sa.on, r.sb.on).replace(/[() ]/g, '') : '—']
+        .forEach((v, i) => tr.append(el('td', { class: i ? 'num' : '', text: v }))); tb.append(tr);
+    }
+    t.append(tb);
+    card.append(el('details', {}, [el('summary', { text: 'Valori per periodo' }), el('div', { class: 'scroll' }, [t]), el('div', { class: 'muted', style: 'margin-top:6px', text: '* periodo incompleto: la variazione è mostrata solo quando entrambi i periodi sono completi.' })]));
+  }
+
+  /* ---------- promemoria cambio pile (.ics) ---------- */
+  // Stesso formato del file inviato su Telegram: UID fisso per termostato, quindi riaggiungerlo aggiorna l'evento.
+  function batteryICS(name, dueDay, p) {
+    const esc = (t) => t.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-'), ymd = (ds) => ds.replace(/-/g, '');
+    const nextDay = dayStr(new Date(utcDay(dueDay).getTime() + 864e5)), now = new Date();
+    const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//termostati//pile//IT', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      'BEGIN:VEVENT', `UID:pile-${slug}@termostati`, `DTSTAMP:${stamp}`, `SEQUENCE:${Math.floor(now.getTime() / 60000)}`,
+      `DTSTART;VALUE=DATE:${ymd(dueDay)}`, `DTEND;VALUE=DATE:${ymd(nextDay)}`, `SUMMARY:${esc('Cambia le pile - ' + name)}`,
+      `DESCRIPTION:${esc(`Data stimata dal calo osservato: batteria al ${p}% oggi, soglia di avviso raggiunta intorno a questa data.`)}`,
+      'TRANSP:TRANSPARENT', 'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc('Cambia le pile - ' + name)}`, 'TRIGGER:-P2DT15H', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+  }
+
+  /* ---------- esportazione ---------- */
+  function csvCell(v) { v = v == null ? '' : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function saveFile(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = el('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  function exportCSV() {
+    if (!S.raw || !S.raw.length) return;
+    const t1 = S.model.recs[S.model.recs.length - 1].t, t0 = S.days ? t1 - S.days * 86400e3 : 0;
+    const head = Object.keys(S.raw[0]), rows = S.raw.filter(r => (utc(r.ts_utc) || 0) >= t0);
+    const label = S.days === 0 ? 'tutto' : S.days === 1 ? '24ore' : S.days + 'giorni';
+    saveFile(`termostati_${dayStr(new Date(t1))}_${label}.csv`, [head.join(','), ...rows.map(r => head.map(h => csvCell(r[h])).join(','))].join('\n') + '\n', 'text/csv;charset=utf-8');
+  }
+
+  /* Riepilogo mensile: pagina stampabile; "Salva come PDF" dal dialogo di stampa (funziona anche su iPhone: Condividi > Salva su File). */
+  function monthList() {
+    const keys = [...aggregate(samplesOf(S.model.recs, null)).days.keys()].map(d => d.slice(0, 7));
+    return [...new Set(keys)].sort().reverse();
+  }
+  const monthLong = (k) => `${MONTHS[+k.slice(5, 7) - 1]} ${k.slice(0, 4)}`;
+  const prevMonthKey = (k) => { const y = +k.slice(0, 4), m = +k.slice(5, 7); return m === 1 ? `${y - 1}-12` : `${y}-${p2(m - 1)}`; };
+
+  function buildReport(mk) {
+    const body = $('report-body'); body.replaceChildren();
+    const recs = S.model.recs, all = samplesOf(recs, null), wk = aggregate(all), tm = toutByDay(all);
+    const dk = [...wk.days.keys()].sort(), daysOf = (k) => dk.filter(d => d.startsWith(k));
+    const cols = [['Questo mese', mk], ['Mese prima', prevMonthKey(mk)], ['Stesso mese anno prima', prevYearKey(mk)]];
+    const st = cols.map(([, k]) => { const ds = daysOf(k); return ds.length ? { ...bucketStats(wk.days, tm, ds), ds } : null; });
+    body.append(el('h1', { text: 'Riepilogo termostati — ' + monthLong(mk) }),
+      el('div', { class: 'muted', text: `Generato il ${fmtDT(Date.now())} · dashboard v${VERSION} · valori di caldaia e costo stimati dal relè` }));
+
+    const kt = el('table', { style: 'margin-top:12px' });
+    kt.append(el('thead', {}, [el('tr', {}, ['', ...cols.map(c => c[0])].map(c => el('th', { text: c })))]));
+    const kb = el('tbody');
+    const line = (lbl, f) => { const tr = el('tr', {}, [el('td', { text: lbl })]); st.forEach(x => tr.append(el('td', { class: 'num', text: x ? (f(x) ?? '—') : '—' }))); kb.append(tr); };
+    const days = (x) => x.obs / 24;
+    line('Ore con caldaia accesa', x => x.obs >= 24 ? nf1.format(x.on) + ' h' : null);
+    line('Ore al giorno', x => x.obs >= 24 ? nf1.format(x.on / days(x)) + ' h' : null);
+    line('Costo stimato', x => x.obs >= 24 && gasCost(x.on) != null ? eur(gasCost(x.on)) : null);
+    line('T esterna media', x => x.toutDays ? nf1.format(x.toutMean) + ' °C' : null);
+    line('Gradi-giorno', x => x.toutDays ? nf0.format(x.hdd) : null);
+    line('Ore per gradogiorno', x => x.toutDays >= 4 && x.hdd >= 5 ? nf2.format(x.on / x.hdd) : null);
+    line('Giorni con dati', x => String(x.ds.length));
+    kt.append(kb); body.append(kt);
+
+    const mrecs = recs.filter(r => romeBucket(r.t).day.startsWith(mk));
+    const tt = el('table', { style: 'margin-top:16px' });
+    tt.append(el('thead', {}, [el('tr', {}, ['Termostato', 'Temp. min / media / max', 'Umidità media', 'Temp. impostata media', 'Batteria (inizio → fine)', 'Richiesta di calore'].map(c => el('th', { text: c })))]));
+    const tbb = el('tbody'), avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+    for (const n of S.model.names) {
+      const s = mrecs.filter(r => r.name === n); if (!s.length) continue;
+      const tv = s.map(r => r.tamb).filter(v => v != null), rv = s.map(r => r.rh).filter(v => v != null), sv = s.map(r => r.tset).filter(v => v != null);
+      const bp = s.map(r => pct(r.mv)).filter(v => v != null), rd = aggregate(samplesOf(recs, n)).days;
+      let on = 0, obs = 0; for (const d of daysOf(mk)) { const v = rd.get(d); if (v) { on += v[0]; obs += v[1]; } }
+      const tr = el('tr', {}, [el('td', { text: n })]);
+      [tv.length ? `${nf1.format(Math.min(...tv))} / ${nf1.format(avg(tv))} / ${nf1.format(Math.max(...tv))} °C` : '—', rv.length ? nf0.format(avg(rv)) + ' %' : '—',
+       sv.length ? nf1.format(avg(sv)) + ' °C' : '—', bp.length ? `${bp[0]}% → ${bp[bp.length - 1]}%` : '—', obs ? `${nf0.format(on / obs * 100)} % del tempo (~${nf0.format(on)} h)` : '—']
+        .forEach(v => tr.append(el('td', { class: 'num', text: v }))); tbb.append(tr);
+    }
+    tt.append(tbb); body.append(tt);
+
+    const bars = el('div', { class: 'chart', style: 'margin-top:16px' });
+    body.append(el('h3', { style: 'margin-top:16px', text: 'Ore di caldaia accesa al giorno' }), bars);
+    const items = daysOf(mk).map(d => ({ day: d, v: wk.days.get(d)[0], partial: wk.days.get(d)[1] < 22 }));
+    requestAnimationFrame(() => barChart(bars, items, 'var(--series-2)'));
+    return st[0] != null;
+  }
+  function openReport(mk) {
+    const sel = $('report-month'); sel.replaceChildren();
+    for (const k of monthList()) sel.append(el('option', { value: k, text: monthLong(k) }));
+    sel.value = mk || sel.options[0].value;
+    $('report').hidden = false; document.documentElement.classList.add('report-open'); buildReport(sel.value);
+  }
+  function closeReport() { $('report').hidden = true; document.documentElement.classList.remove('report-open'); }
+
+  /* ---------- fatture del gas ---------- */
+  // Stessa logica di "intelliclima_monitor.py fatture": consumo di base dalle fatture estive, Smc di riscaldamento
+  // per ora di caldaia, confronto con la stima del modello e calibrazione suggerita.
+  const BASE_MAX_H_DAY = 0.25, MIN_COVERAGE = 0.9;
+  function parseFatture(text) {
+    const out = [];
+    for (const r of parseCSV(text)) {
+      const d0 = (r.periodo_dal || '').trim(), d1 = (r.periodo_al || '').trim(), smc = num(r.smc);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d0) || !/^\d{4}-\d{2}-\d{2}$/.test(d1) || smc == null || d1 < d0) continue;
+      out.push({ d0, d1, giorni: Math.round((utcDay(d1) - utcDay(d0)) / 864e5) + 1, smc, eur: num(r.totale_eur), marg: num(r.prezzo_marginale_eur_smc),
+                 fissa: num(r.quota_fissa_eur), qc: num(r.quota_consumi_eur), acc: num(r.accise_eur), iva: num(r.iva_eur), tipo: (r.tipo_lettura || 'reale').trim().toLowerCase() });
+    }
+    return out.sort((a, b) => a.d0 < b.d0 ? -1 : 1);
+  }
+  // fatture della corrente elettrica (fatture_corrente.csv): consumo in kWh e costo diviso per voce
+  function parseFattureEl(text) {
+    const out = [], iso = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+    for (const r of parseCSV(text)) {
+      const d0 = (r.periodo_dal || '').trim(), d1 = (r.periodo_al || '').trim(), kwh = num(r.kwh);
+      if (!iso(d0) || !iso(d1) || kwh == null || d1 < d0) continue;
+      out.push({ d0, d1, giorni: Math.round((utcDay(d1) - utcDay(d0)) / 864e5) + 1, kwh, eur: num(r.totale_eur), mat: num(r.materia_energia_eur), tra: num(r.trasporto_eur),
+                 one: num(r.oneri_eur), imp: num(r.imposte_iva_eur), f1: num(r.kwh_f1), f2: num(r.kwh_f2), f3: num(r.kwh_f3), pen: num(r.prezzo_energia_eur_kwh), marg: num(r.prezzo_marginale_eur_kwh), tipo: (r.tipo_lettura || 'reale').trim().toLowerCase() });
+    }
+    return out.sort((a, b) => a.d0 < b.d0 ? -1 : 1);
+  }
+  function periodStats(days, tm, d0, d1) {
+    let on = 0, obs = 0, hdd = 0, ts = 0, n = 0;
+    for (let dt = utcDay(d0), d = d0; d <= d1; dt = new Date(dt.getTime() + 864e5), d = dayStr(dt)) {
+      const v = days.get(d); if (v) { on += v[0]; obs += v[1]; }
+      if (tm.has(d)) { hdd += Math.max(0, CFG.hddBase - tm.get(d)) * Math.min(1, (v ? v[1] : 0) / 24); ts += tm.get(d); n++; }
+    }
+    return { on, obs, hdd, tout: n ? ts / n : null };
+  }
+  function analyzeFatture(all, fatt) {
+    const { days } = aggregate(all), tm = toutByDay(all), kw = CFG.boilerKw, kwh = CFG.gasKwh;
+    const items = fatt.map(f => {
+      const st = periodStats(days, tm, f.d0, f.d1), cov = st.obs / (f.giorni * 24);
+      const summer = f.d0.slice(0, 4) === f.d1.slice(0, 4) && f.d0.slice(5) >= '06-01' && f.d1.slice(5) <= '09-15';
+      const isBase = summer && f.tipo === 'reale' && !(cov >= MIN_COVERAGE && st.on / f.giorni > BASE_MAX_H_DAY);
+      return { ...f, ...st, cov, isBase };
+    });
+    const bs = items.filter(i => i.isBase);
+    const baseline = bs.length ? bs.reduce((a, i) => a + i.smc, 0) / bs.reduce((a, i) => a + i.giorni, 0) : null;
+    for (const i of items) {
+      i.heat = i.isBase || baseline == null ? null : Math.max(0, i.smc - baseline * i.giorni);
+      i.comparable = !i.isBase && i.tipo === 'reale' && i.cov >= MIN_COVERAGE && i.on >= 5 && i.heat != null;
+      i.smcH = i.comparable ? i.heat / i.on : null;
+      i.model = (kw > 0 && baseline != null && !i.isBase && i.cov >= MIN_COVERAGE) ? baseline * i.giorni + i.on * kw / kwh : null;
+      i.err = i.model != null && i.smc > 0 ? i.model / i.smc - 1 : null;
+    }
+    const comp = items.filter(i => i.comparable);
+    let calib = null;
+    if (comp.length) {
+      const smcH = comp.reduce((a, i) => a + i.heat, 0) / comp.reduce((a, i) => a + i.on, 0);
+      const marg = invoicePrice()?.marg ?? null;
+      calib = { smcH, kw: smcH * kwh, price: marg, n: comp.length };
+    }
+    return { items, baseline, calib };
+  }
+
+  async function fetchFattureText(name = 'fatture.csv') {
+    try {
+      if (S.remote && S.remote.kind === 'gh') {
+        const r = await fetch(`https://api.github.com/repos/${S.remote.repo}/contents/data/${name}`, { headers: { Accept: 'application/vnd.github.raw+json', Authorization: `Bearer ${S.remote.token}` } });
+        return r.ok ? r.text() : null;
+      }
+      if (S.remote && S.remote.kind === 'rel') {
+        const r = await fetch(name + '?_=' + Date.now(), { cache: 'no-store' });
+        return r.ok ? r.text() : null;
+      }
+    } catch { /* le fatture sono facoltative */ }
+    return null;
+  }
+  async function loadFatture() {
+    const [t, te] = await Promise.all([fetchFattureText(), fetchFattureText('fatture_corrente.csv')]);
+    S.fatt = t ? parseFatture(t) : null;
+    S.fattEl = te ? parseFattureEl(te) : null;
+    if (S.model) { renderCons(); renderHome(); }
+    if (view() === 'corrente') renderEnergy();
+  }
+
+  /* ---------- bolletta in corso e consumi anomali (stessa logica di "intelliclima_monitor.py bolletta") ---------- */
+  const IVA_FISSA = 1.22, MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  const nowMs = () => (typeof window.__NOW === 'number' ? window.__NOW : Date.now());
+  const addDays = (ds, n) => dayStr(new Date(utcDay(ds).getTime() + n * 864e5));
+  const addMonths = (ds, n) => { const [y, m] = ds.split('-').map(Number), t = y * 12 + m - 1 + n; return `${Math.floor(t / 12)}-${p2(t % 12 + 1)}-01`; };
+  const monthLast = (ds) => addDays(addMonths(ds, 1), -1);
+  function romeMidnight(ds) {                       // istante (ms) in cui inizia il giorno italiano ds
+    let t = utcDay(ds).getTime() - 3 * HOUR;
+    for (let i = 0; i < 8; i++, t += HOUR) { const b = romeBucket(t); if (b.day === ds && b.hour === 0) return t; }
+    return utcDay(ds).getTime() - HOUR;
+  }
+  function billPeriods(fatt, today) {
+    if (!fatt.length) return [];
+    const last = fatt[fatt.length - 1], two = last.giorni > 45, out = [];
+    let start = addDays(last.d1, 1);
+    while (start <= today && out.length < 8) { const end = monthLast(two ? addMonths(start, 1) : start); out.push([start, end]); start = addDays(end, 1); }
+    return out;
+  }
+  function costContext(all) {
+    const fatt = S.fatt || [], an = fatt.length ? analyzeFatture(all, fatt) : { baseline: null, calib: null };
+    let kw = CFG.boilerKw > 0 ? CFG.boilerKw : (an.calib ? an.calib.kw : null);
+    const withF = fatt.filter(f => f.fissa && f.giorni), lf = withF[withF.length - 1];
+    return { fatt, all, days: aggregate(all).days, tm: toutByDay(all), kw, kwh: CFG.gasKwh, price: gasPrice(), baseline: an.baseline,
+             fissaDay: lf ? lf.fissa / lf.giorni * IVA_FISSA : 0 };
+  }
+  function estimatePeriod(ctx, d0, d1, now) {
+    const start = romeMidnight(d0), end = romeMidnight(addDays(d1, 1)), nowTs = Math.min(now, end), elH = (nowTs - start) / HOUR;
+    if (elH < 6 || !(ctx.price > 0)) return null;
+    let on = 0, obs = 0;
+    for (let d = d0; d <= d1; d = addDays(d, 1)) { const v = ctx.days.get(d); if (v) { on += v[0]; obs += v[1]; } }
+    const cov = obs / elH, res = { d0, d1, elDays: elH / 24, totDays: (end - start) / 864e5, cov, on, done: now >= end, insufficient: cov < 0.3 };
+    if (res.insufficient) return res;
+    const onEst = on / cov, remDays = Math.max(0, (end - nowTs) / 864e5);
+    let rate = null;
+    if (remDays > 0) { rate = perDay(windowStats(ctx.all, now - 14 * 864e5, now)); if (rate == null) rate = onEst / (elH / 24); }
+    const parts = (days, hours) => [ctx.fissaDay * days, ctx.baseline != null ? ctx.baseline * days * ctx.price : 0, ctx.kw ? hours * ctx.kw / ctx.kwh * ctx.price : null];
+    const acc = parts(elH / 24, onEst), rem = parts(remDays, (rate || 0) * remDays), tot = a => a[0] + a[1] + (a[2] || 0);
+    return { ...res, acc, rem, heatOk: acc[2] != null, accTotal: tot(acc), fcTotal: tot(acc) + tot(rem), rate, remDays };
+  }
+  function fitHoursVsHdd(pts) {
+    const n = pts.length, mx = pts.reduce((a, p) => a + p[0], 0) / n, my = pts.reduce((a, p) => a + p[1], 0) / n;
+    const sxx = pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+    if (sxx > 1e-9) { const k = pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / sxx; if (k > 0) return [my - k * mx, k]; }
+    const sx = pts.reduce((a, p) => a + p[0] * p[0], 0);
+    return [0, sx > 0 ? pts.reduce((a, p) => a + p[0] * p[1], 0) / sx : 0];
+  }
+  function weeklyAnomaly(ctx, now) {
+    const base = CFG.hddBase, d1 = addDays(romeBucket(now).day, -1), d0 = addDays(d1, -6);
+    const pts = (a, b) => { const out = []; for (let d = a; d <= b; d = addDays(d, 1)) { const v = ctx.days.get(d); if (v && v[1] >= 20 && ctx.tm.has(d)) out.push([Math.max(0, base - ctx.tm.get(d)), v[0]]); } return out; };
+    const cur = pts(d0, d1), ref = pts(addDays(d0, -56), addDays(d0, -1)).filter(p => p[0] > 0);
+    const hddCur = cur.reduce((a, p) => a + p[0], 0);
+    if (cur.length < 5 || hddCur < 10 || ref.length < 14 || ref.reduce((a, p) => a + p[0], 0) < 40) return null;
+    const [a, k] = fitHoursVsHdd(ref), exp = cur.reduce((x, p) => x + Math.max(0, a + k * p[0]), 0), on = cur.reduce((x, p) => x + p[1], 0);
+    return exp > 0 ? { d0, d1, on, exp, dev: on / exp - 1 } : null;
+  }
+  function renderBill(host, all) {
+    const ctx = costContext(all), now = nowMs();
+    if (!ctx.fatt.length || !(ctx.price > 0)) return;
+    const today = romeBucket(now).day, ests = [];
+    for (const [d0, d1] of billPeriods(ctx.fatt, today).slice(-2)) { const e = estimatePeriod(ctx, d0, d1, now); if (e) ests.push(e); }
+    const an = weeklyAnomaly(ctx, now), bud = CFG.budget > 0 ? CFG.budget : 0;
+    let me = null;
+    if (bud) { const m0 = today.slice(0, 8) + '01'; me = estimatePeriod(ctx, m0, monthLast(m0), now); if (me && (me.insufficient || !me.heatOk)) me = null; }
+    if (!ests.length && !an) return;
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' });
+    const cur = ests.find(e => !e.done), pend = ests.find(e => e.done);
+    const dm = (d) => dayLabel(d);
+    card.append(el('div', { class: 'ch-head' }, [el('h3', { text: 'Bolletta in corso' }),
+      el('span', { class: 'muted', text: cur ? `${dm(cur.d0)}–${dm(cur.d1)} · giorno ${Math.floor(cur.elDays) + 1} di ${Math.round(cur.totDays)}` : 'stima dai consumi misurati' })]));
+    const bar = (acc, fc, mark, over) => {
+      const top = Math.max(fc, mark || 0) * 1.08 || 1, col = over ? 'var(--warn)' : 'var(--series-2)';
+      const w = el('div', { class: 'pbar', role: 'img', 'aria-label': `Speso ${nf0.format(acc)} euro, previsione ${nf0.format(fc)} euro` + (mark ? `, soglia ${nf0.format(mark)} euro` : '') }, [
+        el('i', { style: `width:${fc / top * 100}%;background:${col};opacity:.35` }), el('i', { style: `width:${acc / top * 100}%;background:${col}` })]);
+      if (mark) w.append(el('b', { style: `left:${mark / top * 100}%`, title: `Soglia ${eur(mark)}` }));
+      return w;
+    };
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    if (cur && !cur.insufficient) {
+      const a = cur.acc;
+      kpi.append(tile('Speso finora', eur(cur.accTotal), `quota fissa ${nf1.format(a[0])} · base ${nf1.format(a[1])}` + (cur.heatOk ? ` · riscaldamento ${nf1.format(a[2])}` : '')),
+                 tile('Previsione a fine periodo', eur(cur.fcTotal), 'al ritmo delle ultime due settimane'));
+      card.append(kpi, bar(cur.accTotal, cur.fcTotal, 0, false));
+      if (!cur.heatOk) card.append(el('div', { class: 'muted', style: 'margin-top:6px', text: 'Riscaldamento non stimabile: imposta la potenza della caldaia in “Impostazioni costo” (o servono fatture invernali coperte dai dati).' }));
+      if (cur.cov < 0.9) card.append(el('div', { class: 'muted', style: 'margin-top:6px', text: `Rilevazioni disponibili per il ${nf0.format(cur.cov * 100)}% del periodo: il resto è ricavato per proporzione.` }));
+    } else if (cur) {
+      card.append(el('div', { class: 'muted', style: 'margin-top:8px', text: `Dati insufficienti per il periodo in corso (${nf0.format(cur.cov * 100)}% coperto).` }));
+    }
+    if (pend && !pend.insufficient) card.append(el('div', { class: 'muted', style: 'margin-top:10px', text: `Periodo ${dm(pend.d0)}–${dm(pend.d1)} concluso, fattura in arrivo: stima circa ${eur(pend.accTotal)}.` }));
+    if (me) {
+      const nome = MESI[+today.slice(5, 7) - 1], over = me.fcTotal >= bud;
+      card.append(el('div', { style: 'margin-top:12px' }, [
+        el('div', { class: 'row', style: 'justify-content:space-between' }, [el('b', { text: `${nome.charAt(0).toUpperCase() + nome.slice(1)} contro la soglia` }),
+          el('span', { class: 'muted', text: `${eur(me.accTotal)} speso · previsione ${eur(me.fcTotal)} · soglia ${eur(bud)}` })]),
+        bar(me.accTotal, me.fcTotal, bud, over)]));
+      if (over) card.append(el('div', { style: 'margin-top:6px;font-weight:600', text: me.accTotal >= bud ? 'Soglia mensile superata.' : 'A questo ritmo supererai la soglia mensile.' }));
+    }
+    if (an) {
+      const hot = an.dev * 100 >= 40 && an.on - an.exp >= 6;
+      card.append(el('div', { style: 'margin-top:12px' + (hot ? ';font-weight:600' : '') },
+        [(hot ? '⚠ ' : '') + `Rispetto al normale a parità di freddo: ${an.dev >= 0 ? '+' : '−'}${nf0.format(Math.abs(an.dev) * 100)}% (${nf0.format(an.on)} h contro ~${nf0.format(an.exp)} attese, 7 giorni fino al ${dm(an.d1)})`]));
+    }
+    card.append(el('div', { class: 'muted', style: 'margin-top:8px', text: `Stima: quota fissa con IVA + consumo di base + ore di caldaia × ${ctx.kw ? nf1.format(ctx.kw) : '?'} kW ÷ ${nf1.format(ctx.kwh)} kWh/Smc × ${nf2.format(ctx.price)} €/Smc, a meteo costante. Non sostituisce la fattura.` }));
+    host.append(card);
+  }
+
+  function renderFatture(host, all) {
+    if (!S.fatt || !S.fatt.length) return;
+    const an = analyzeFatture(all, S.fatt), c = an.calib, items = an.items;
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
+      el('div', { class: 'ch-head' }, [el('h3', { text: 'Fatture gas' }), el('span', { class: 'muted', text: 'consumi reali contro stime del modello' })])]);
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    const ip = invoicePrice(), marg = ip ? ip.marg : null, withEur = items.filter(i => i.eur != null);
+    const heatEur = withEur.filter(i => !i.isBase), pool = heatEur.length ? heatEur : withEur;
+    const totE = pool.reduce((a, i) => a + i.eur, 0), totS = pool.reduce((a, i) => a + i.smc, 0);
+    kpi.append(
+      tile('Consumo di base (acqua calda)', an.baseline != null ? `${nf2.format(an.baseline)} Smc/giorno` : '—',
+        an.baseline != null ? `${nf1.format(an.baseline * 30.4)} Smc/mese` + (marg ? `, circa ${eur(an.baseline * 30.4 * marg)}/mese` : '') : 'serve una fattura estiva'),
+      tile('Prezzo di ogni Smc in più', marg ? eur(marg) : '—', ip ? `accise e IVA incluse, media di ${ip.n} ${ip.n === 1 ? 'fattura' : 'fatture'}` : ''),
+      tile('Costo medio reale', totS ? `${eur(totE / totS)}/Smc` : '—', heatEur.length ? 'periodi di riscaldamento, quota fissa inclusa' : 'solo estate: pesa molto la quota fissa'),
+      tile('Smc per ora di caldaia', c ? nf2.format(c.smcH) : '—', c ? `BOILER_KW suggerito ${nf1.format(c.kw)}${CFG.boilerKw > 0 ? ` (ora ${nf1.format(CFG.boilerKw)})` : ''}` : 'serve una fattura invernale coperta dalle rilevazioni'));
+    card.append(kpi);
+
+    // grafico: Smc reali contro stima del modello, una coppia di barre per fattura
+    const rows = items.map(i => ({ label: dayLabel(i.d0), long: `${dayLabel(i.d0)}–${dayLabel(i.d1)}/${i.d1.slice(2, 4)}`, a: i.smc, b: i.model,
+                                   partialA: !i.isBase && i.cov < MIN_COVERAGE, partialB: !i.isBase && i.cov < MIN_COVERAGE }));
+    const hasModel = rows.some(r => r.b != null);
+    const chart = el('div', { class: 'chart', style: 'margin-top:12px' });
+    card.append(el('div', { class: 'legend', style: 'margin-top:12px' }, [el('span', { style: '--c:var(--series-2)', text: 'Smc fatturati' }), hasModel ? el('span', { style: '--c:var(--series-1)', text: 'Stima del modello' }) : null]), chart);
+    const draw = () => groupBar(chart, rows, hasModel, false, { a: 'fatturati', b: 'stima del modello', aria: 'Smc fatturati e stimati per fattura' }, ' Smc');
+    draw(); new ResizeObserver(() => { if (chart.dataset.w != chart.clientWidth) draw(); }).observe(chart);
+    // grafico dei costi: totale di ogni fattura diviso in consumi, quota fissa e imposte
+    const costRows = items.filter(i => i.eur != null).map(i => {
+      const det = i.qc != null && i.fissa != null && i.acc != null && i.iva != null;
+      return { label: dayLabel(i.d0), long: `${dayLabel(i.d0)}–${dayLabel(i.d1)}/${i.d1.slice(2, 4)}`, tot: i.eur,
+               parts: det ? [['consumi', i.qc, 'var(--series-1)'], ['quota fissa', i.fissa, 'var(--series-4)'], ['accise e IVA', i.acc + i.iva, 'var(--series-3)']]
+                          : [['totale', i.eur, 'var(--series-1)']] };
+    });
+    if (costRows.length) {
+      const cchart = el('div', { class: 'chart', style: 'margin-top:4px' });
+      card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Costo per fattura' }), el('span', { class: 'muted', text: '€ totali, diviso per voce' })]),
+        el('div', { class: 'legend' }, [el('span', { style: '--c:var(--series-1)', text: 'Consumi' }), el('span', { style: '--c:var(--series-4)', text: 'Quota fissa' }), el('span', { style: '--c:var(--series-3)', text: 'Accise e IVA' })]), cchart);
+      const drawC = () => costStack(cchart, costRows);
+      drawC(); new ResizeObserver(() => { if (cchart.dataset.w != cchart.clientWidth) drawC(); }).observe(cchart);
+    }
+    if (!hasModel) card.append(el('div', { class: 'muted', style: 'margin-top:6px', text: 'Per vedere la stima del modello imposta la potenza della caldaia in “Impostazioni costo” e servono fatture con rilevazioni sul periodo.' }));
+
+    // calibrazione
+    if (c) {
+      const aff = c.n === 1 ? 'indicativa (una sola fattura)' : c.n < 4 ? 'discreta' : 'buona';
+      const box = el('div', { class: 'row', style: 'margin-top:12px;align-items:center' }, [
+        el('span', { text: `Calibrazione suggerita (${c.n} ${c.n === 1 ? 'fattura confrontabile' : 'fatture confrontabili'}, affidabilità ${aff}): ` }),
+        el('b', { text: `BOILER_KW ${nf1.format(c.kw)}` + (c.price ? ` · prezzo gas medio ${nf2.format(c.price)} €/Smc (già usato dalla dashboard)` : '') })]);
+      const b = el('button', { class: 'btn', type: 'button', text: 'Applica alla dashboard' });
+      b.addEventListener('click', () => {
+        CFG.boilerKw = Math.round(c.kw * 10) / 10;
+        let o = {}; try { o = JSON.parse(safe.get('tm_cons') || '{}'); } catch { /* ignora */ }
+        o.boilerKw = CFG.boilerKw; safe.set('tm_cons', JSON.stringify(o)); renderCons();
+      });
+      box.append(b); card.append(box,
+        el('div', { class: 'muted', style: 'margin-top:4px', text: 'La dashboard usa già il prezzo medio delle fatture. Per la potenza nel report Telegram imposta BOILER_KW nelle Variables del repository. Il costo stimato esclude la quota fissa.' }));
+    }
+
+    // tabella
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Giorni', 'Smc', 'Totale', '€/Smc medio', 'Riscaldamento (Smc)', 'Ore caldaia', 'Smc/ora', 'Stima modello', 'Scarto', 'Note'].map(c2 => el('th', { text: c2 })))]));
+    const tb = el('tbody');
+    for (const i of items.slice().reverse()) {
+      const note = i.tipo !== 'reale' ? 'lettura stimata: esclusa' : i.isBase ? 'estate: consumo di base' : i.cov < MIN_COVERAGE ? `rilevazioni al ${nf0.format(i.cov * 100)}%: non confrontabile` : '';
+      const tr = el('tr');
+      [`${dayLabel(i.d0)}/${i.d0.slice(2, 4)} – ${dayLabel(i.d1)}/${i.d1.slice(2, 4)}`, String(i.giorni), nf1.format(i.smc), i.eur != null ? eur(i.eur) : '—', i.eur != null ? eur(i.eur / i.smc) : '—',
+       i.heat != null ? nf1.format(i.heat) : '—', i.cov >= MIN_COVERAGE || i.on > 0 ? nf1.format(i.on) : '—', i.smcH != null ? nf2.format(i.smcH) : '—',
+       i.model != null ? nf1.format(i.model) : '—', i.err != null ? `${i.err >= 0 ? '+' : '−'}${nf0.format(Math.abs(i.err) * 100)}%` : '—', note]
+        .forEach((v, k) => tr.append(el('td', { class: k && k < 10 ? 'num' : '', text: v }))); tb.append(tr);
+    }
+    t.append(tb);
+    card.append(el('details', {}, [el('summary', { text: 'Dettaglio fatture' }), el('div', { class: 'scroll' }, [t]),
+      el('div', { class: 'muted', style: 'margin-top:6px', text: 'Smc di riscaldamento = Smc fatturati − consumo di base × giorni. Solo fatture con lettura reale e rilevazioni su almeno il 90% del periodo entrano nella calibrazione.' })]));
+    host.append(card);
+  }
+
+  /* ---------- eventi ---------- */
+  $('range').addEventListener('click', e => {
+    const b = e.target.closest('button[data-r]'); if (!b) return;
+    S.days = +b.dataset.r;
+    for (const x of $('range').children) x.setAttribute('aria-pressed', x === b);
+    safe.set('tm_days', String(S.days));
+    if (S.model) render();
+  });
+  $('btn-connect').addEventListener('click', async () => {
+    const repo = $('repo').value.trim(), token = $('token').value.trim() || safe.get('tm_token') || '';
+    $('connect-err').textContent = '';
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) { $('connect-err').textContent = 'Inserisci repository nel formato proprietario/nome e il token.'; return; }
+    try {
+      useText(await fetchGitHub(repo, token), 'GitHub · ' + repo);
+      safe.set('tm_repo', repo); safe.set('tm_token', token); S.remote = { kind: 'gh', repo, token }; loadFatture();
+      $('token').value = '';
+    } catch (e) { $('connect-err').textContent = e.message; }
+  });
+  $('file').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { useText(await f.text(), 'file locale · ' + f.name); S.remote = null; }
+    catch (err) { $('connect-err').textContent = err.message; }
+  });
+  // iOS Safari ignora user-scalable=no: si blocca anche il gesto di pinch
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault());
+  $('btn-reload').addEventListener('click', async () => {
+    const b = $('btn-reload'); b.disabled = true; b.textContent = 'Ricarico…';
+    try { await fetch(location.pathname + location.search, { cache: 'reload' }); } catch { /* si ricarica comunque */ }
+    location.reload();   // ricarica l'HTML (appena riscaricato) e quindi anche i dati; token e impostazioni restano nel browser
+  });
+  $('btn-csv').addEventListener('click', exportCSV);
+  $('btn-report').addEventListener('click', () => openReport());
+  $('report-month').addEventListener('change', e => buildReport(e.target.value));
+  $('report-print').addEventListener('click', () => window.print());
+  $('report-close').addEventListener('click', closeReport);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('report').hidden) closeReport(); });
+  $('file-fatt').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { S.fatt = parseFatture(await f.text()); if (S.model) renderCons(); } catch (err) { $('connect-err').textContent = err.message; }
+  });
+  $('btn-source').addEventListener('click', () => showConnect());
+  $('btn-theme').addEventListener('click', () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark'; safe.set('tm_theme', root.dataset.theme);
+  });
+
+  const th = safe.get('tm_theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th;
+  const dd = safe.get('tm_days');
+  if (dd !== null && ['0', '1', '7', '30'].includes(dd)) {
+    S.days = +dd; for (const x of $('range').children) x.setAttribute('aria-pressed', x.dataset.r === dd);
+  }
+  /* Riapertura dalla Home di iOS: la pagina resta in memoria e non si ricarica da sola.
+     Quando torna in primo piano si controlla se index.html e' cambiato (e in tal caso si ricarica tutto)
+     e comunque si rileggono i dati. */
+  let myHtml = null;
+  async function fetchHtml() { const r = await fetch(location.pathname + location.search, { cache: 'no-store' }); if (!r.ok) throw 0; return r.text(); }
+  fetchHtml().then(t => { myHtml = t; }).catch(() => { /* aperta da file: nessun controllo versione */ });
+  async function onVisible() {
+    if (document.visibilityState !== 'visible') return;
+    try { const t = await fetchHtml(); if (myHtml !== null && t !== myHtml) { location.reload(); return; } if (myHtml === null) myHtml = t; } catch { /* offline */ }
+    refresh();
+  }
+  document.addEventListener('visibilitychange', onVisible);
+  window.addEventListener('pageshow', e => { if (e.persisted) onVisible(); });
+  $('version').textContent = 'v' + VERSION;
+  setInterval(refresh, 10 * 60 * 1000);
+  boot();
+})();
+</script>
+</body>
+</html>
