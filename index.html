@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.14.0 pagina iniziale "Casa" con le card dei moduli (per ora Termostati); la dashboard dei termostati si apre dalla card (#termostati)
   1.13.3 card del termostato: solo l'icona fiamma/cerchio per lo stato della caldaia, senza testo accesa/spenta
   1.13.2 durata dell'ultimo ciclo (dall'ultima accensione all'ultimo spegnimento) al posto del totale assoluto
   1.13.1 ultima accensione/spegnimento con segni grafici e tempo totale di accensione
@@ -83,6 +84,19 @@
   header { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
   .sub { color: var(--ink2); margin-top: 2px; }
 
+  .back { display: inline-flex; align-items: center; gap: 4px; color: var(--ink2); text-decoration: none; font-size: 13px; margin-bottom: 4px; padding: 2px 0; }
+  .back:hover { color: var(--ink); }
+  .hgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+  .hcard { display: block; color: inherit; text-decoration: none; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; min-width: 0; transition: border-color .15s, transform .15s; }
+  .hcard:hover { border-color: var(--axis); }
+  .hcard:active { transform: scale(.99); }
+  .hc-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .hc-ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--series-2) 16%, transparent); color: var(--series-2); flex: none; }
+  .hc-top h2 { font-size: 16px; flex: 1; }
+  .hc-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .hc-row .n { flex: 1; font-weight: 600; }
+  .hc-row .t { font-size: 18px; font-weight: 600; }
+  .hc-row .h { color: var(--ink2); min-width: 46px; text-align: right; }
   .alerts { display: grid; gap: 8px; margin-bottom: 16px; }
   .alert { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: baseline; }
   .alert b { font-weight: 600; }
@@ -193,7 +207,8 @@
 <div class="wrap">
   <header>
     <div>
-      <h1>Stato termostati</h1>
+      <a class="back" id="back" href="#" hidden aria-label="Torna alla home"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg> Casa</a>
+      <h1 id="title">Casa</h1>
       <div class="sub" id="updated">Caricamento…</div>
     </div>
     <button class="btn" id="btn-reload" type="button" title="Ricarica pagina e dati, ignorando la cache">↻ Ricarica</button>
@@ -215,6 +230,10 @@
       <input type="file" id="file-fatt" accept=".csv,text/csv" hidden>
     </div>
     <div class="err" id="connect-err" role="alert"></div>
+  </section>
+
+  <section id="home" hidden aria-label="Casa">
+    <div class="hgrid" id="hgrid"></div>
   </section>
 
   <main id="main" hidden>
@@ -277,7 +296,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.13.3';
+  const VERSION = '1.14.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -380,11 +399,51 @@
     if (!r.ok) throw new Error('Errore GitHub ' + r.status);
     return r.text();
   }
+  /* ---------- home e navigazione (#termostati = dashboard dei termostati, altrimenti home) ---------- */
+  const view = () => (location.hash || '').replace(/^#\/?/, '') === 'termostati' ? 'termostati' : 'home';
+  function applyView() {
+    const v = view(), has = !!S.model;
+    $('home').hidden = !(has && v === 'home');
+    $('main').hidden = !(has && v === 'termostati');
+    $('back').hidden = v === 'home';
+    $('title').textContent = v === 'home' ? 'Casa' : 'Termostati';
+    document.title = v === 'home' ? 'Casa' : 'Stato termostati';
+    if (has && v === 'termostati' && S.stale) render();            // i grafici si disegnano solo quando sono visibili (servono le larghezze)
+  }
+  window.addEventListener('hashchange', () => { applyView(); window.scrollTo(0, 0); });
+  // ogni modulo della casa e' una card: per ora solo i termostati
+  const MODULES = [{ id: 'termostati', title: 'Termostati', build: buildThermoCard }];
+  function renderHome() {
+    const g = $('hgrid'); g.replaceChildren();
+    if (!S.model) return;
+    for (const m of MODULES) g.append(m.build());
+  }
+  function buildThermoCard() {
+    const bad = $('alerts').querySelectorAll('.ico.crit, .ico.warn').length;
+    const a = el('a', { class: 'hcard', href: '#termostati', 'aria-label': 'Apri i termostati' });
+    const ico = svg('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' });
+    ico.append(svg('path', { d: 'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z' }));
+    a.append(el('div', { class: 'hc-top' }, [el('span', { class: 'hc-ico' }, [ico]), el('h2', { text: 'Termostati' }),
+      el('span', { class: 'chip' }, [el('span', { class: 'ico ' + (bad ? 'warn' : 'good'), text: bad ? '!' : '✓' }), bad ? `${bad} ${bad === 1 ? 'avviso' : 'avvisi'}` : 'Tutto regolare'])]));
+    for (const n of S.model.names) {
+      const r = latestOf(n), on = r.relay === 1;
+      const fl = svg('svg', { class: 'bico ' + (on ? 'on' : 'off'), width: 22, height: 22, viewBox: '0 0 24 24', role: 'img', 'aria-label': on ? 'Caldaia accesa' : 'Caldaia spenta', style: 'margin:0' });
+      const tt = svg('title'); tt.textContent = on ? 'Caldaia accesa' : 'Caldaia spenta'; fl.append(tt);
+      if (r.relay != null) {
+        if (on) fl.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
+        else fl.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
+      }
+      a.append(el('div', { class: 'hc-row' }, [el('span', { class: 'key', style: `background:${colorOf(n)};width:10px;height:10px;border-radius:50%;flex:none` }), el('span', { class: 'n', text: n }),
+        el('span', { class: 't', text: r.tamb == null ? '—' : nf1.format(r.tamb) + ' °C' }), el('span', { class: 'h', text: r.rh == null ? '' : '💧 ' + nf0.format(r.rh) + '%' }), fl]));
+    }
+    a.append(el('div', { class: 'foot', text: 'Tocca per aprire grafici, consumi e fatture' }));
+    return a;
+  }
   function useText(text, label) {
     const rawRows = parseCSV(text), m = toModel(rawRows);
     if (!m.recs.length) throw new Error('Il CSV non contiene righe valide.');
     S.model = m; S.source = label; S.raw = rawRows;
-    $('connect').hidden = true; $('main').hidden = false;
+    $('connect').hidden = true; applyView();
     $('source').textContent = 'Sorgente: ' + label;
     render();
   }
@@ -424,6 +483,9 @@
     $('updated').textContent = `Ultimo dato ${fmtDT(lastT)} · ${ago(lastT)}`;
     renderAlerts();
     renderNow();
+    renderHome();
+    if ($('main').hidden) { S.stale = true; return; }                  // nella home basta questo: il resto si disegna all'apertura
+    S.stale = false;
     const t1 = lastT, t0 = S.days ? t1 - S.days * 86400e3 : recs[0].t;
     const inRange = recs.filter(r => r.t >= t0);
     $('range-info').textContent = `${fmtDT(Math.max(t0, recs[0].t))} → ${fmtDT(t1)}`;
@@ -965,6 +1027,7 @@
 
   const consUI = { room: '', setOpen: false, sMode: 'week', sMetric: 'h' };
   function renderCons() {
+    if ($('main').hidden) { S.stale = true; return; }                  // fuori dalla pagina dei termostati si ridisegna all'apertura
     const host = $('cons'); host.replaceChildren();
     const recs = S.model.recs, names = S.model.names, all = samplesOf(recs, null);
     if (![...all.values()].some(e => e.on != null)) { host.hidden = true; return; }
