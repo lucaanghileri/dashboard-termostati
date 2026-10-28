@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.16.0 fatture della corrente elettrica (fatture_corrente.csv): consumo al giorno, costo per voce, tabella
   1.15.0 card "Corrente elettrica" nella home, con la sua dashboard (per ora vuota) su #corrente
   1.14.0 pagina iniziale "Casa" con le card dei moduli (per ora Termostati); la dashboard dei termostati si apre dalla card (#termostati)
   1.13.3 card del termostato: solo l'icona fiamma/cerchio per lo stato della caldaia, senza testo accesa/spenta
@@ -304,7 +305,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.15.0';
+  const VERSION = '1.16.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -382,7 +383,7 @@
   }
 
   /* ---------- stato ---------- */
-  const S = { model: null, days: 7, source: '', remote: null, fatt: null, raw: null };
+  const S = { model: null, days: 7, source: '', remote: null, fatt: null, fattEl: null, raw: null };
 
   /* ---------- caricamento dati ---------- */
   async function loadConfig() {
@@ -428,11 +429,64 @@
     if (v === 'corrente') renderEnergy();
     if (has && v === 'termostati' && S.stale) render();            // i grafici si disegnano solo quando sono visibili (servono le larghezze)
   }
-  // dashboard della corrente elettrica: per ora vuota, pronta per i dati
+  // dashboard della corrente elettrica: letture in tempo reale (ancora nessuna) e fatture
   function renderEnergy() {
-    const b = $('corrente-body'); b.replaceChildren();
-    b.append(el('div', { class: 'big' }, [icon('bolt', 28)]), el('h2', { text: 'Nessun dato ancora' }),
-      el('div', { class: 'muted', text: 'Qui compariranno consumi, potenza e costi della corrente elettrica.' }));
+    const host = $('corrente'); host.replaceChildren();
+    const live = el('div', { class: 'card empty' });
+    live.append(el('div', { class: 'big' }, [icon('bolt', 28)]), el('h2', { text: 'Nessuna lettura in tempo reale' }),
+      el('div', { class: 'muted', text: 'Qui compariranno consumi e potenza istantanei, quando collegheremo una sorgente dati.' }));
+    host.append(live);
+    renderFattureEl(host);
+  }
+  function renderFattureEl(host) {
+    const f = S.fattEl || [];
+    const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
+      el('div', { class: 'ch-head' }, [el('h3', { text: 'Fatture corrente' }), el('span', { class: 'muted', text: f.length ? `${f.length} ${f.length === 1 ? 'fattura' : 'fatture'}` : '' })])]);
+    if (!f.length) {
+      card.append(el('div', { class: 'muted', style: 'margin-top:8px', text: 'Nessuna fattura caricata. Aggiungi le righe a data/fatture_corrente.csv nel repository.' }));
+      host.append(card); return;
+    }
+    const last = f[f.length - 1], withE = f.filter(x => x.eur != null);
+    const sumK = f.reduce((a, x) => a + x.kwh, 0), sumD = f.reduce((a, x) => a + x.giorni, 0);
+    const sumKe = withE.reduce((a, x) => a + x.kwh, 0), sumE = withE.reduce((a, x) => a + x.eur, 0);
+    const kpi = el('div', { class: 'kpis' });
+    const tile = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+    kpi.append(
+      tile('Ultima fattura', last.eur != null ? eur(last.eur) : '—', `${dayLabel(last.d0)}–${dayLabel(last.d1)}/${last.d1.slice(2, 4)} · ${nf0.format(last.kwh)} kWh`),
+      tile('Consumo medio', `${nf1.format(sumK / sumD)} kWh/giorno`, `${nf0.format(sumK / sumD * 30.4)} kWh al mese, su ${f.length} ${f.length === 1 ? 'fattura' : 'fatture'}`),
+      tile('Costo medio', sumKe ? `${eur(sumE / sumKe)}/kWh` : '—', 'tutto compreso: quote fisse, oneri, imposte e IVA'),
+      tile('Totale speso', withE.length ? eur(sumE) : '—', `${dayLabel(f[0].d0)}/${f[0].d0.slice(2, 4)} – ${dayLabel(last.d1)}/${last.d1.slice(2, 4)}`));
+    card.append(kpi);
+    const long = (x) => `${dayLabel(x.d0)}–${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`;
+    const c1 = el('div', { class: 'chart', style: 'margin-top:4px' });
+    card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Consumo al giorno' }), el('span', { class: 'muted', text: 'kWh per fattura' })]), c1);
+    const rows1 = f.map(x => ({ label: dayLabel(x.d0), long: long(x), a: x.kwh / x.giorni, partialA: x.tipo !== 'reale' }));
+    const d1 = () => groupBar(c1, rows1, false, false, { a: 'kWh al giorno', aria: 'Consumo di corrente al giorno per fattura' }, ' kWh');
+    d1(); new ResizeObserver(() => { if (c1.dataset.w != c1.clientWidth) d1(); }).observe(c1);
+    const costRows = withE.map(x => {
+      const det = x.mat != null && x.tra != null && x.one != null && x.imp != null;
+      return { label: dayLabel(x.d0), long: long(x), tot: x.eur,
+               parts: det ? [['energia', x.mat, 'var(--series-1)'], ['trasporto e contatore', x.tra, 'var(--series-4)'], ['oneri di sistema', x.one, 'var(--series-3)'], ['imposte e IVA', x.imp, 'var(--series-2)']]
+                          : [['totale', x.eur, 'var(--series-1)']] };
+    });
+    if (costRows.length) {
+      const c2 = el('div', { class: 'chart', style: 'margin-top:4px' });
+      card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Costo per fattura' }), el('span', { class: 'muted', text: '€ totali, diviso per voce' })]),
+        el('div', { class: 'legend' }, [el('span', { style: '--c:var(--series-1)', text: 'Energia' }), el('span', { style: '--c:var(--series-4)', text: 'Trasporto e contatore' }),
+          el('span', { style: '--c:var(--series-3)', text: 'Oneri di sistema' }), el('span', { style: '--c:var(--series-2)', text: 'Imposte e IVA' })]), c2);
+      const d2 = () => costStack(c2, costRows, 'Costo di ogni fattura della corrente');
+      d2(); new ResizeObserver(() => { if (c2.dataset.w != c2.clientWidth) d2(); }).observe(c2);
+    }
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Giorni', 'kWh', 'kWh/giorno', 'Totale', '€/kWh', 'Note'].map(c => el('th', { text: c })))]));
+    const tb = el('tbody');
+    for (const x of f.slice().reverse()) {
+      const tr = el('tr');
+      [`${dayLabel(x.d0)}/${x.d0.slice(2, 4)} – ${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`, String(x.giorni), nf0.format(x.kwh), nf1.format(x.kwh / x.giorni), x.eur != null ? eur(x.eur) : '—', x.eur != null ? eur(x.eur / x.kwh) : '—', x.tipo !== 'reale' ? 'lettura stimata' : '']
+        .forEach((v, k) => tr.append(el('td', { class: k && k < 6 ? 'num' : '', text: v }))); tb.append(tr);
+    }
+    t.append(tb);
+    card.append(el('details', {}, [el('summary', { text: 'Dettaglio fatture' }), el('div', { class: 'scroll' }, [t])]));
+    host.append(card);
   }
   window.addEventListener('hashchange', () => { applyView(); window.scrollTo(0, 0); });
   // ogni modulo della casa e' una card: per ora solo i termostati
@@ -445,8 +499,11 @@
   function buildEnergyCard() {
     const a = el('a', { class: 'hcard', href: '#corrente', 'aria-label': 'Apri la corrente elettrica' });
     const hi = el('span', { class: 'hc-ico', style: 'background:color-mix(in srgb, var(--series-4) 18%, transparent);color:var(--series-4)' }, [icon('bolt', 20)]);
-    a.append(el('div', { class: 'hc-top' }, [hi, el('h2', { text: 'Corrente elettrica' }), el('span', { class: 'chip', text: 'Nessun dato' })]),
-      el('div', { class: 'foot', style: 'margin-top:0', text: 'Consumi, potenza e costi: in arrivo' }));
+    const f = S.fattEl || [], last = f[f.length - 1];
+    a.append(el('div', { class: 'hc-top' }, [hi, el('h2', { text: 'Corrente elettrica' }), el('span', { class: 'chip', text: f.length ? `${f.length} ${f.length === 1 ? 'fattura' : 'fatture'}` : 'Nessun dato' })]));
+    if (last) a.append(el('div', { class: 'hc-row' }, [el('span', { class: 'n', text: `${dayLabel(last.d0)}–${dayLabel(last.d1)}/${last.d1.slice(2, 4)}` }),
+      el('span', { class: 't', text: last.eur != null ? eur(last.eur) : '—' }), el('span', { class: 'h', text: `${nf0.format(last.kwh)} kWh` })]));
+    a.append(el('div', { class: 'foot', style: last ? '' : 'margin-top:0', text: last ? 'Tocca per aprire le fatture' : 'Fatture e consumi: in arrivo' }));
     return a;
   }
   function buildThermoCard() {
@@ -988,13 +1045,13 @@
   }
 
   // costo per fattura: barre impilate (consumi, quota fissa, imposte) con il totale sopra
-  function costStack(host, rows) {
+  function costStack(host, rows, aria = 'Costo di ogni fattura gas') {
     host.replaceChildren();
     const W = Math.max(260, Math.floor(host.clientWidth)), H = 230; host.dataset.w = host.clientWidth;
     if (!rows.length) { host.append(el('div', { class: 'muted', style: 'padding:40px 0;text-align:center', text: 'Nessun dato' })); return; }
     const m = { l: 44, r: 8, t: 18, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
     const ticks = niceTicks(0, Math.max(1, ...rows.map(r => r.tot)), 4), top = ticks[ticks.length - 1];
-    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Costo di ogni fattura gas' });
+    const s = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': aria });
     for (const v of ticks) {
       const y = m.t + ih - v / top * ih;
       s.append(svg('line', { x1: m.l, x2: W - m.r, y1: y, y2: y, stroke: 'var(--grid)' }));
@@ -1417,6 +1474,17 @@
     }
     return out.sort((a, b) => a.d0 < b.d0 ? -1 : 1);
   }
+  // fatture della corrente elettrica (fatture_corrente.csv): consumo in kWh e costo diviso per voce
+  function parseFattureEl(text) {
+    const out = [], iso = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
+    for (const r of parseCSV(text)) {
+      const d0 = (r.periodo_dal || '').trim(), d1 = (r.periodo_al || '').trim(), kwh = num(r.kwh);
+      if (!iso(d0) || !iso(d1) || kwh == null || d1 < d0) continue;
+      out.push({ d0, d1, giorni: Math.round((utcDay(d1) - utcDay(d0)) / 864e5) + 1, kwh, eur: num(r.totale_eur), mat: num(r.materia_energia_eur), tra: num(r.trasporto_eur),
+                 one: num(r.oneri_eur), imp: num(r.imposte_iva_eur), tipo: (r.tipo_lettura || 'reale').trim().toLowerCase() });
+    }
+    return out.sort((a, b) => a.d0 < b.d0 ? -1 : 1);
+  }
   function periodStats(days, tm, d0, d1) {
     let on = 0, obs = 0, hdd = 0, ts = 0, n = 0;
     for (let dt = utcDay(d0), d = d0; d <= d1; dt = new Date(dt.getTime() + 864e5), d = dayStr(dt)) {
@@ -1452,23 +1520,25 @@
     return { items, baseline, calib };
   }
 
-  async function fetchFattureText() {
+  async function fetchFattureText(name = 'fatture.csv') {
     try {
       if (S.remote && S.remote.kind === 'gh') {
-        const r = await fetch(`https://api.github.com/repos/${S.remote.repo}/contents/data/fatture.csv`, { headers: { Accept: 'application/vnd.github.raw+json', Authorization: `Bearer ${S.remote.token}` } });
+        const r = await fetch(`https://api.github.com/repos/${S.remote.repo}/contents/data/${name}`, { headers: { Accept: 'application/vnd.github.raw+json', Authorization: `Bearer ${S.remote.token}` } });
         return r.ok ? r.text() : null;
       }
       if (S.remote && S.remote.kind === 'rel') {
-        const r = await fetch('fatture.csv?_=' + Date.now(), { cache: 'no-store' });
+        const r = await fetch(name + '?_=' + Date.now(), { cache: 'no-store' });
         return r.ok ? r.text() : null;
       }
     } catch { /* le fatture sono facoltative */ }
     return null;
   }
   async function loadFatture() {
-    const t = await fetchFattureText();
+    const [t, te] = await Promise.all([fetchFattureText(), fetchFattureText('fatture_corrente.csv')]);
     S.fatt = t ? parseFatture(t) : null;
-    if (S.model) renderCons();
+    S.fattEl = te ? parseFattureEl(te) : null;
+    if (S.model) { renderCons(); renderHome(); }
+    if (view() === 'corrente') renderEnergy();
   }
 
   /* ---------- bolletta in corso e consumi anomali (stessa logica di "intelliclima_monitor.py bolletta") ---------- */
