@@ -28,6 +28,8 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.13.2 durata dell'ultimo ciclo (dall'ultima accensione all'ultimo spegnimento) al posto del totale assoluto
+  1.13.1 ultima accensione/spegnimento con segni grafici e tempo totale di accensione
   1.13.0 stato attuale: data e ora dell'ultima accensione e dell'ultimo spegnimento di ogni termostato
   1.12.0 bolletta in corso con previsione, soglia mensile e confronto con il normale a parità di freddo
   1.11.0 costo stimato con il prezzo medio delle fatture (pesato sugli Smc); grafico dei costi per fattura
@@ -108,6 +110,8 @@
   .sw { margin-top: 10px; font-size: 13px; display: grid; gap: 2px; }
   .sw .r { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .sw .r b { white-space: nowrap; }
+  .swico { display: inline-flex; align-items: center; gap: 2px; color: var(--ink2); }
+  .swico.on { color: var(--series-2); }
   .sw .muted { font-size: 12px; }
   .foot { margin-top: 12px; color: var(--muted); font-size: 12px; }
 
@@ -272,7 +276,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.13.0';
+  const VERSION = '1.13.2';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -528,11 +532,27 @@
         metric('Umidità', r.rh == null ? '—' : nf0.format(r.rh), r.rh == null ? '' : '%'),
         metric('Caldaia', r.relay == null ? '—' : (r.relay ? 'Accesa' : 'Spenta'), '', r.relay == null ? null : flame(!!r.relay)),
       ]));
-      const sw = switchTimes(n), isOn = r.relay === 1;
+      const sw = switchTimes(n);
       if (sw.lastOn || sw.lastOff || r.relay != null) {
-        const row = (lbl, ev, running) => el('div', { class: 'r', title: ev ? `Rilevato al controllo delle ${fHM.format(ev.t)}; il controllo precedente era alle ${fHM.format(ev.from)}` : '' },
-          [el('span', {}, [lbl, running && ev ? el('span', { class: 'muted', text: ` · da ${durTxt(Date.now() - ev.t)}` }) : null]), el('b', { text: ev ? fmtDT(ev.t) : 'nessuno nei dati' })]);
-        card.append(el('div', { class: 'sw' }, [row('Ultima accensione', sw.lastOn, isOn), row('Ultimo spegnimento', sw.lastOff, r.relay === 0),
+        // segni grafici al posto delle etichette: fiamma + freccia su = accensione, cerchio + freccia giu' = spegnimento, orologio = tempo totale acceso
+        const icon = (kind, title) => {
+          const g = el('span', { class: 'swico ' + kind, role: 'img', 'aria-label': title, title });
+          const mk = (w) => svg('svg', { width: w, height: w, viewBox: '0 0 24 24', 'aria-hidden': 'true', fill: 'none', stroke: 'currentColor', 'stroke-width': 2.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+          if (kind === 'clock') { const c = mk(18); c.append(svg('circle', { cx: 12, cy: 12, r: 9 }), svg('path', { d: 'M12 7v5l3.5 2' })); g.append(c); return g; }
+          const f = svg('svg', { width: 18, height: 18, viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+          if (kind === 'on') f.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
+          else f.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
+          const ar = mk(12); ar.append(svg('path', { d: kind === 'on' ? 'M12 19V5M5 12l7-7 7 7' : 'M12 5v14M5 12l7 7 7-7' }));
+          g.append(f, ar); return g;
+        };
+        const ev = (kind, title, e) => el('div', { class: 'r', title: e ? `${title}: rilevato al controllo delle ${fHM.format(e.t)}; il controllo precedente era alle ${fHM.format(e.from)}` : title },
+          [icon(kind, title), el('b', { text: e ? fmtDT(e.t) : 'nessuno nei dati' })]);
+        // durata dell'ultimo ciclo: da ultima accensione a ultimo spegnimento (se e' ancora acceso, fino ad adesso)
+        const cyc = sw.lastOn ? (sw.lastOff && sw.lastOff.t > sw.lastOn.t ? { ms: sw.lastOff.t - sw.lastOn.t, running: false } : (r.relay === 1 ? { ms: Date.now() - sw.lastOn.t, running: true } : null)) : null;
+        const hm = (ms) => `${nf0.format(Math.floor(ms / HOUR))} h ${p2(Math.round(ms / 60000) % 60)} min`;
+        card.append(el('div', { class: 'sw' }, [ev('on', 'Ultima accensione', sw.lastOn), ev('off', 'Ultimo spegnimento', sw.lastOff),
+          el('div', { class: 'r', title: 'Quanto è rimasto acceso: dall\u2019ultima accensione all\u2019ultimo spegnimento (se è ancora acceso, fino ad adesso)' },
+            [icon('clock', 'Durata accensione'), el('span', {}, [el('b', { text: cyc ? hm(cyc.ms) : '—' }), cyc && cyc.running ? el('span', { class: 'muted', text: ' · in corso' }) : null])]),
           el('div', { class: 'muted', text: 'Orari rilevati ai controlli (di norma ogni ora): il cambio è avvenuto poco prima.' })]));
       }
       card.append(el('div', { class: 'bat-row' }, [
