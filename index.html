@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.13.3 card del termostato: solo l'icona fiamma/cerchio per lo stato della caldaia, senza testo accesa/spenta
   1.13.2 durata dell'ultimo ciclo (dall'ultima accensione all'ultimo spegnimento) al posto del totale assoluto
   1.13.1 ultima accensione/spegnimento con segni grafici e tempo totale di accensione
   1.13.0 stato attuale: data e ora dell'ultima accensione e dell'ultimo spegnimento di ogni termostato
@@ -276,7 +277,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.13.2';
+  const VERSION = '1.13.3';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -522,7 +523,8 @@
         el('div', { class: 'val' }, [icon || null, document.createTextNode(val), unit ? el('small', { text: ' ' + unit }) : null])]);
       // fiamma = richiesta di calore in corso, cerchio vuoto = spenta (l'etichetta testuale resta: l'icona non e' l'unico segnale)
       const flame = (on) => {
-        const s = svg('svg', { class: 'bico ' + (on ? 'on' : 'off'), width: 20, height: 20, viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+        const s = svg('svg', { class: 'bico ' + (on ? 'on' : 'off'), width: 30, height: 30, viewBox: '0 0 24 24', role: 'img', 'aria-label': on ? 'Caldaia accesa' : 'Caldaia spenta' });
+        const tt = svg('title'); tt.textContent = on ? 'Caldaia accesa' : 'Caldaia spenta'; s.append(tt);
         if (on) s.append(svg('path', { d: 'M12 2.5c.6 3.2-1.2 4.9-2.8 6.7C7.7 11 6.5 12.8 6.5 15.2a5.5 5.5 0 0 0 11 0c0-2.1-.9-3.6-2-4.9-.3 1.1-.8 1.8-1.5 2.2.5-3.9-.4-7.6-2-10z', fill: 'currentColor' }));
         else s.append(svg('circle', { cx: 12, cy: 12, r: 7, fill: 'none', stroke: 'currentColor', 'stroke-width': 2 }));
         return s;
@@ -530,7 +532,7 @@
       card.append(el('div', { class: 'metrics' }, [
         metric('Temperatura', r.tamb == null ? '—' : nf1.format(r.tamb), r.tamb == null ? '' : '°C'),
         metric('Umidità', r.rh == null ? '—' : nf0.format(r.rh), r.rh == null ? '' : '%'),
-        metric('Caldaia', r.relay == null ? '—' : (r.relay ? 'Accesa' : 'Spenta'), '', r.relay == null ? null : flame(!!r.relay)),
+        metric('Caldaia', r.relay == null ? '—' : '', '', r.relay == null ? null : flame(!!r.relay)),
       ]));
       const sw = switchTimes(n);
       if (sw.lastOn || sw.lastOff || r.relay != null) {
