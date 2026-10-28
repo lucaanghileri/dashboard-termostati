@@ -28,6 +28,7 @@
   1.7.0  temperatura impostata e fasce caldaia sul grafico; andamento stagionale con confronto anno prima; export CSV e riepilogo mensile (PDF); app installabile
   1.8.0  pulsante "Aggiungi al calendario" per il cambio pile (file .ics)
   1.9.0  fatture del gas: consumo di base, prezzo reale, Smc per ora di caldaia, confronto con la stima e calibrazione suggerita
+  1.18.0 corrente: stima della prossima bolletta, confronto con i mesi prima e segnalazione dei consumi anomali
   1.17.0 fatture corrente reali: consumo per fascia (F1/F2/F3), prezzo dell'energia, tabella con le fasce
   1.16.0 fatture della corrente elettrica (fatture_corrente.csv): consumo al giorno, costo per voce, tabella
   1.15.0 card "Corrente elettrica" nella home, con la sua dashboard (per ora vuota) su #corrente
@@ -306,7 +307,7 @@
                      fcDays: 30, urgentDays: 7, windowDays: 30, minDays: 7,   // previsione pile (come lo script Python)
                      boilerKw: 0, gasEur: 0, gasKwh: 9.5, hddBase: 18, gasManual: false, budget: 0,
                      dataStaleH: 3 };   // ore senza nuove rilevazioni prima del banner "dati non aggiornati"   // consumi (0 = costo non calcolato)
-  const VERSION = '1.17.0';
+  const VERSION = '1.18.0';
   const CFG = { ...DEFAULTS };
   const CSV_PATH = 'data/intelliclima_log.csv';   // percorso nel repository (modalita' GitHub API)
   const TZ = 'Europe/Rome';
@@ -439,6 +440,28 @@
     host.append(live);
     renderFattureEl(host);
   }
+  // stima della prossima bolletta e confronto con i mesi prima, solo dalle fatture gia' caricate
+  const EL_ANOM_PCT = 25;
+  function elInsights(f) {
+    const mens = f.filter(x => x.giorni <= 35);                       // le fatture bimestrali non fanno media con le mensili
+    if (mens.length < 2) return null;
+    const last = f[f.length - 1], ref = mens.slice(-4, -1).length ? mens.slice(-4, -1) : mens.slice(0, 1);
+    const perDay = (x) => x.kwh / x.giorni, avg = (a) => a.reduce((s, x) => s + x.kwh, 0) / a.reduce((s, x) => s + x.giorni, 0);
+    const prev = last.giorni <= 35 ? f.filter(x => x.giorni <= 35 && x.d1 < last.d0).slice(-3) : [];
+    const dev = prev.length >= 2 ? perDay(last) / avg(prev) - 1 : null;
+    // prossimo periodo: il mese dopo l'ultima fattura
+    const n0 = dayStr(new Date(utcDay(last.d1).getTime() + 864e5)), nd = utcDay(n0);
+    const n1 = dayStr(new Date(Date.UTC(nd.getUTCFullYear(), nd.getUTCMonth() + 1, 0))), ng = Math.round((utcDay(n1) - nd) / 864e5) + 1;
+    const base = mens.slice(-3), rate = avg(base), lo = Math.min(...base.map(perDay)), hi = Math.max(...base.map(perDay));
+    const ml = mens[mens.length - 1];
+    let cost = null;
+    if (ml.eur != null) {
+      const fix = ml.qfp != null ? ml.qfp * 1.10 / ml.giorni : 0, vr = (ml.eur - fix * ml.giorni) / ml.kwh;   // quota fissa con IVA al giorno e costo di ogni kWh in piu'
+      const at = (k) => fix * ng + vr * k * ng;
+      cost = { mid: at(rate), lo: at(lo), hi: at(hi), vr };
+    }
+    return { last, prev, dev, n0, n1, ng, kwh: rate * ng, klo: lo * ng, khi: hi * ng, cost, nbase: base.length };
+  }
   function renderFattureEl(host) {
     const f = S.fattEl || [];
     const card = el('article', { class: 'card inner', style: 'margin-top:12px' }, [
@@ -459,6 +482,20 @@
       tile('Totale speso', withE.length ? eur(sumE) : '—', `${dayLabel(f[0].d0)}/${f[0].d0.slice(2, 4)} – ${dayLabel(last.d1)}/${last.d1.slice(2, 4)}`),
       ...(last.marg != null ? [tile('Prezzo dell\u2019energia', `${eur(last.marg)}/kWh`, 'ultima fattura, con accisa e IVA: quanto costa un kWh in più')] : []));
     card.append(kpi);
+    const ins = elInsights(f), per = (x) => `${dayLabel(x.d0)}–${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`;
+    if (ins) {
+      const pc = (v) => `${v >= 0 ? '+' : '−'}${nf0.format(Math.abs(v) * 100)}%`, k2 = el('div', { class: 'kpis' });
+      const tl = (lbl, val, sub) => el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: lbl }), el('div', { class: 'val', text: val }), el('div', { class: 'muted', text: sub || '' })]);
+      k2.append(tl(`Prossima bolletta · ${per({ d0: ins.n0, d1: ins.n1 })}`, ins.cost ? `≈ ${eur(ins.cost.mid)}` : `≈ ${nf0.format(ins.kwh)} kWh`,
+        `${nf0.format(ins.kwh)} kWh attesi (tra ${nf0.format(ins.klo)} e ${nf0.format(ins.khi)})` + (ins.cost ? `, tra ${eur(ins.cost.lo)} e ${eur(ins.cost.hi)}` : '') + `. Stima sul consumo degli ultimi ${ins.nbase} mesi`));
+      if (ins.dev != null) {
+        const bad = Math.abs(ins.dev) * 100 >= EL_ANOM_PCT;
+        k2.append(el('div', { class: 'kpi' }, [el('div', { class: 'lbl', text: 'Ultima fattura rispetto ai mesi prima' }),
+          el('div', { class: 'val' }, [el('span', { class: 'ico ' + (bad ? 'warn' : 'good'), text: bad ? '!' : '✓', style: 'margin-right:6px' }), pc(ins.dev)]),
+          el('div', { class: 'muted', text: bad ? `consumo fuori dall'ordinario: soglia ±${EL_ANOM_PCT}% sui kWh al giorno, media dei ${ins.prev.length} mesi precedenti` : `nella norma (soglia ±${EL_ANOM_PCT}%) rispetto alla media dei ${ins.prev.length} mesi precedenti` })]));
+      }
+      card.append(k2);
+    }
     const long = (x) => `${dayLabel(x.d0)}–${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`;
     const c1 = el('div', { class: 'chart', style: 'margin-top:4px' });
     card.append(el('div', { class: 'ch-head', style: 'margin-top:16px' }, [el('h3', { text: 'Consumo al giorno' }), el('span', { class: 'muted', text: 'kWh per fattura' })]), c1);
@@ -488,12 +525,13 @@
       const d2 = () => costStack(c2, costRows, 'Costo di ogni fattura della corrente');
       d2(); new ResizeObserver(() => { if (c2.dataset.w != c2.clientWidth) d2(); }).observe(c2);
     }
-    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Giorni', 'kWh', 'F1', 'F2', 'F3', 'kWh/giorno', 'Totale', '€/kWh', 'Note'].map(c => el('th', { text: c })))]));
+    const t = el('table'); t.append(el('thead', {}, [el('tr', {}, ['Periodo', 'Giorni', 'kWh', 'F1', 'F2', 'F3', 'kWh/giorno', 'vs prec.', 'Totale', '€/kWh', 'Note'].map(c => el('th', { text: c })))]));
     const tb = el('tbody');
+    const dlt = new Map(); f.forEach((x, k) => { const q = f[k - 1]; if (q && x.giorni <= 35 && q.giorni <= 35) dlt.set(x, (x.kwh / x.giorni) / (q.kwh / q.giorni) - 1); });
     for (const x of f.slice().reverse()) {
-      const tr = el('tr');
-      [`${dayLabel(x.d0)}/${x.d0.slice(2, 4)} – ${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`, String(x.giorni), nf0.format(x.kwh), x.f1 != null ? nf0.format(x.f1) : '—', x.f2 != null ? nf0.format(x.f2) : '—', x.f3 != null ? nf0.format(x.f3) : '—', nf1.format(x.kwh / x.giorni), x.eur != null ? eur(x.eur) : '—', x.eur != null ? eur(x.eur / x.kwh) : '—', x.tipo !== 'reale' ? 'lettura stimata' : '']
-        .forEach((v, k) => tr.append(el('td', { class: k && k < 9 ? 'num' : '', text: v }))); tb.append(tr);
+      const tr = el('tr'), dv = dlt.get(x);
+      [`${dayLabel(x.d0)}/${x.d0.slice(2, 4)} – ${dayLabel(x.d1)}/${x.d1.slice(2, 4)}`, String(x.giorni), nf0.format(x.kwh), x.f1 != null ? nf0.format(x.f1) : '—', x.f2 != null ? nf0.format(x.f2) : '—', x.f3 != null ? nf0.format(x.f3) : '—', nf1.format(x.kwh / x.giorni), dv != null ? `${dv >= 0 ? '+' : '−'}${nf0.format(Math.abs(dv) * 100)}%` : '—', x.eur != null ? eur(x.eur) : '—', x.eur != null ? eur(x.eur / x.kwh) : '—', x.tipo !== 'reale' ? 'lettura stimata' : '']
+        .forEach((v, k) => tr.append(el('td', { class: k && k < 10 ? 'num' : '', text: v }))); tb.append(tr);
     }
     t.append(tb);
     card.append(el('details', {}, [el('summary', { text: 'Dettaglio fatture' }), el('div', { class: 'scroll' }, [t])]));
@@ -1492,7 +1530,7 @@
       const d0 = (r.periodo_dal || '').trim(), d1 = (r.periodo_al || '').trim(), kwh = num(r.kwh);
       if (!iso(d0) || !iso(d1) || kwh == null || d1 < d0) continue;
       out.push({ d0, d1, giorni: Math.round((utcDay(d1) - utcDay(d0)) / 864e5) + 1, kwh, eur: num(r.totale_eur), mat: num(r.materia_energia_eur), tra: num(r.trasporto_eur),
-                 one: num(r.oneri_eur), imp: num(r.imposte_iva_eur), f1: num(r.kwh_f1), f2: num(r.kwh_f2), f3: num(r.kwh_f3), pen: num(r.prezzo_energia_eur_kwh), marg: num(r.prezzo_marginale_eur_kwh), tipo: (r.tipo_lettura || 'reale').trim().toLowerCase() });
+                 one: num(r.oneri_eur), imp: num(r.imposte_iva_eur), qfp: num(r.quota_fissa_potenza_eur), f1: num(r.kwh_f1), f2: num(r.kwh_f2), f3: num(r.kwh_f3), pen: num(r.prezzo_energia_eur_kwh), marg: num(r.prezzo_marginale_eur_kwh), tipo: (r.tipo_lettura || 'reale').trim().toLowerCase() });
     }
     return out.sort((a, b) => a.d0 < b.d0 ? -1 : 1);
   }
